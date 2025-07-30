@@ -4,7 +4,7 @@ setlocal
 echo Kopiere Plugin...
 
 REM Quelle: Repo-Pfad
-set SOURCE=C:\QgisData\GitRepos\kataster_converter
+set SOURCE=C:\Users\Christian\GitRepos\QgisKatasterImporter
 
 REM Ziel: QGIS Plugin-Verzeichnis
 set TARGET=%APPDATA%\QGIS\QGIS3\profiles\default\python\plugins\kataster_converter
