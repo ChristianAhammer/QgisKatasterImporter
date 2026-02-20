@@ -331,9 +331,11 @@ class BEVToQField:
         ntv2_path = self._find_ntv2_grid()
         operation = ""
         if ntv2_path:
+            # Quote the path in case it contains spaces
+            quoted_path = ntv2_path.replace("\\", "/")  # Normalize to forward slashes
             operation = (
                 "+proj=pipeline "
-                f"+step +proj=hgridshift +grids={ntv2_path} "
+                f'+step +proj=hgridshift +grids="{quoted_path}" '
                 "+step +proj=utm +zone=33 +ellps=GRS80 +units=m +no_defs"
             )
             self.log(f"NTv2 aktiv: {ntv2_path}")
