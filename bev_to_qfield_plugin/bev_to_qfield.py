@@ -185,19 +185,7 @@ class BEVToQField:
         return True
     
     def _build_wmts_layer(self) -> Optional[QgsRasterLayer]:
-        """Build BEV WMTS base layer with XYZ tile fallback."""
-        # Try XYZ tile endpoint first (simpler and more reliable with projected CRS)
-        # basemap.at provides XYZ tiles for orthofoto
-        xyz_url = "https://tiles.geoimage.at/tiles/orthofoto/google/{z}/{x}/{y}.jpg"
-        
-        ortho = QgsRasterLayer(f"type=xyz&url={xyz_url}", WMTS_LAYER_NAME, "wms")
-        if ortho.isValid():
-            ortho.setOpacity(1.0)
-            self.log("✓ BEV Orthofoto (XYZ Tiles) geladen")
-            return ortho
-        
-        # Fallback: Try WMTS if XYZ fails
-        self.log("ℹ️  XYZ-Kacheln nicht verfügbar, versuche WMTS...")
+        """Build BEV WMTS base layer."""
         wmts_params = {
             "contextualWMSLegend": "0",
             "crs": "EPSG:3857",
@@ -209,10 +197,10 @@ class BEVToQField:
             "url": "https://www.basemap.at/wmts/1.0.0/WMTSCapabilities.xml",
         }
         wmts_uri = "&".join(f"{k}={v}" for k, v in wmts_params.items())
-        ortho = QgsRasterLayer(wmts_uri, WMTS_LAYER_NAME, "wms")
         
+        ortho = QgsRasterLayer(wmts_uri, WMTS_LAYER_NAME, "wms")
         if not ortho.isValid():
-            self.log("⚠️  BEV Orthofoto konnte nicht geladen werden – Internet erforderlich.")
+            self.log("⚠️  BEV Orthofoto (WMTS) konnte nicht geladen werden.")
             return None
         
         ortho.setOpacity(1.0)
@@ -226,13 +214,13 @@ class BEVToQField:
         proj.setCrs(self.target_crs)  # Set CRS FIRST before adding layers
         root = proj.layerTreeRoot()
         
-        # Add WMTS base layer FIRST (bottom of layer stack)
+        # Add WMTS base layer FIRST (will be at bottom of layer stack)
         ortho = self._build_wmts_layer()
-        if ortho:
+        if ortho and ortho.isValid():
             proj.addMapLayer(ortho)
-            # Move to bottom of layer tree
-            root.insertLayer(0, proj.removeMapLayer(ortho.id()))
             self.log("✓ BEV Orthofoto-Layer hinzugefügt")
+        else:
+            self.log("⚠️  BEV Orthofoto konnte nicht hinzugefügt werden")
         
         # Load vector layers (on top of base layer)
         for ln in layer_names:
