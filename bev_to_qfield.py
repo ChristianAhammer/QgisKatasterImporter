@@ -1,6 +1,8 @@
 # bev_to_qfield.py — QGIS 3.44.x
 # BEV (MGI/GK) → ETRS89 / UTM33N (EPSG:25833) + optionale Geoid-Höhen
 import os, sys, glob, datetime, shutil, tempfile
+from pathlib import Path
+from typing import List, Optional, Dict, Tuple
 
 # ---------- Bootstrap für QGIS + Processing ----------
 QGIS_PREFIX = os.environ.get("QGIS_PREFIX_PATH", r"C:\OSGeo4W\apps\qgis")
@@ -23,290 +25,391 @@ import processing
 from processing.core.Processing import Processing
 
 QgsApplication.setPrefixPath(QGIS_PREFIX, True)
-qgs = QgsApplication([], True)
-qgs.initQgis()
+_qgs_app = QgsApplication([], True)
+_qgs_app.initQgis()
 Processing.initialize()
 
-# ---------- Fixe Pfade ----------
-BASE = r"C:\Users\Christian\Meine Ablage (ca19770610@gmail.com)\QGIS"
+# ---------- Constants ----------
+INPUT_PATTERNS = ("*.shp", "*.gpkg", "*.geojson")
+SRC_CRS_CODE = "EPSG:31255"
+TGT_CRS_CODE = "EPSG:25833"
+TEMP_GPKG_NAME = "kataster_qfield_tmp.gpkg"
+WMTS_LAYER_NAME = "BEV Orthofoto (basemap.at)"
+GEOID_PATTERN_NAME = "GV_Hoehengrid*.tif"
 
-DIR_PROC   = os.path.join(BASE, "02_QGIS_Processing")
-DIR_GRIDS  = os.path.join(DIR_PROC, "grids")
-DIR_OUT    = os.path.join(BASE, "03_QField_Output")
-DIR_ARCH   = os.path.join(DIR_OUT, "archive")
-
-LOCAL_TEMP_ROOT = os.path.join(os.environ.get("LOCALAPPDATA", r"C:\Temp"), "QGIS_Work")
-os.makedirs(LOCAL_TEMP_ROOT, exist_ok=True)
-RUN_TEMP_DIR = tempfile.mkdtemp(prefix="bev2qfield_", dir=LOCAL_TEMP_ROOT)
-
-TMP_GPKG = os.path.join(RUN_TEMP_DIR, "kataster_qfield_tmp.gpkg")
-
-# ---------------- Einstellungen ----------------
-# Lege den QField-Sync-Ordner automatisch an?
-MAKE_SYNC_DIR = True
-
-# Falls der Ordner existiert: vorher leeren? (nur Dateien im Ordner, keine Unterordner)
-CLEAN_SYNC_DIR = False
-
-# Nach erfolgreichem Lauf das erzeugte Projekt in QGIS öffnen?
-OPEN_QGIS_ON_FINISH = False
-# ----------------------------------------------
-
-def ensure_dirs():
-    for d in (DIR_GRIDS, DIR_OUT, DIR_ARCH, RUN_TEMP_DIR):
-        os.makedirs(d, exist_ok=True)
-
-# CRS / Optionen
-SRC_CRS = "EPSG:31255"
-TGT_CRS = "EPSG:25833"
-FIX_GEOM = True
-
-# ---------- Utilities ----------
-def log(msg):
-    ts = datetime.datetime.now().strftime("%H:%M:%S")
-    print(f"[bev2qfield {ts}] {msg}", flush=True)
-
-def collect_layers(dir_raw):
-    pats = ("*.shp","*.gpkg","*.geojson")
-    files = []
-    for pat in pats:
-        files += glob.glob(os.path.join(dir_raw, "**", pat), recursive=True)
-    layers = []
-    for p in files:
-        vl = QgsVectorLayer(p, os.path.splitext(os.path.basename(p))[0], "ogr")
-        if vl.isValid():
-            layers.append(vl)
-    return layers
-
-def safe_name(name):
-    return "".join(ch if ch.isalnum() or ch in "_-" else "_" for ch in name)[:60]
-
-def find_ntv2_grid():
-    cands = sorted(glob.glob(os.path.join(DIR_GRIDS, "**", "*.gsb"), recursive=True))
-    return cands[0].replace("\\","/") if cands else ""
-
-def find_geoid():
-    cands = sorted(glob.glob(os.path.join(DIR_GRIDS, "**", "GV_Hoehengrid*.tif"), recursive=True))
-    return cands[0] if cands else ""
-
-def reproject_layer(inlyr, target_crs, operation, fb):
-    return processing.run("native:reprojectlayer", {
-        "INPUT": inlyr, "TARGET_CRS": target_crs,
-        "OPERATION": operation, "OUTPUT": "TEMPORARY_OUTPUT"
-    }, feedback=fb)["OUTPUT"]
-
-def write_layer(vl, gpkg_path, layer_name, is_first, transform_ctx):
-    opts = QgsVectorFileWriter.SaveVectorOptions()
-    opts.driverName = "GPKG"
-    opts.layerName = layer_name
-    opts.actionOnExistingFile = (
-        QgsVectorFileWriter.CreateOrOverwriteFile if is_first
-        else QgsVectorFileWriter.CreateOrOverwriteLayer
-    )
-    ret = QgsVectorFileWriter.writeAsVectorFormatV2(vl, gpkg_path, transform_ctx, opts)
-    if isinstance(ret, tuple):
-        code, msg = ret
-    else:
-        code, msg = ret, ""
-    if code != QgsVectorFileWriter.NoError:
-        log(f"❌ Schreibfehler '{layer_name}': Code {code} {('— ' + msg) if msg else ''}")
-        return False
-    log(f"✔️  geschrieben: {layer_name} ({'neu' if is_first else 'update'})")
-    return True
-
-def build_project_from_layers(gpkg_path, layer_names, target_crs, out_qgz):
-    proj = QgsProject.instance()
-    proj.clear()
-    proj.setFileName(out_qgz)
-
-    root = proj.layerTreeRoot()
-
-    # 1) Vektorlayer laden und Polygone transparent stellen
-    for ln in layer_names:
-        vl = QgsVectorLayer(f"{gpkg_path}|layername={ln}", ln, "ogr")
-        if not vl.isValid():
-            log(f"⚠️  Layer {ln} konnte nicht geladen werden.")
-            continue
-
-        # Polygon-Layer: transparente Füllung, nur Umriss
-        if vl.geometryType() == QgsWkbTypes.PolygonGeometry:
-            sym = QgsFillSymbol.createSimple({
-                "color": "0,0,0,0",           # vollständig transparent
-                "outline_color": "0,0,0,255", # schwarze Kontur
-                "outline_width": "0.30",
-                "outline_width_unit": "MM"
-            })
-            vl.setRenderer(QgsSingleSymbolRenderer(sym))
-
-        proj.addMapLayer(vl)
-
-    # 2) BEV Orthofoto (basemap.at) als WMTS ganz nach unten
-    wmts_uri = (
-        "contextualWMSLegend=0"
-        "&crs=EPSG:3857"
-        "&dpiMode=7"
-        "&format=image/jpeg"
-        "&layers=bmaporthofoto30cm"
-        "&styles=normal"
-        "&tileMatrixSet=google3857"
-        "&url=https://www.basemap.at/wmts/1.0.0/WMTSCapabilities.xml"
-    )
-    ortho = QgsRasterLayer(wmts_uri, "BEV Orthofoto (basemap.at)", "wms")
-    if ortho.isValid():
-        proj.addMapLayer(ortho, False)            # nicht automatisch einhängen
-        root.insertLayer(len(root.children()), ortho)  # ganz unten platzieren
-    else:
-        log("⚠️  BEV Orthofoto (WMTS) konnte nicht geladen werden – prüfe Internet/URL.")
-
-    # 3) Projekt-CRS setzen & speichern
-    proj.setCrs(target_crs)
-    ok = proj.write()
-    if ok:
-        log(f"Projektdatei erfolgreich geschrieben: {out_qgz}")
-    else:
-        log("❌ Fehler beim Schreiben der Projektdatei!")
+# ---------- Configuration Class ----------
+class BEVToQFieldConfig:
+    """Configuration and settings for BEV to QField conversion."""
+    
+    # Feature flags
+    MAKE_SYNC_DIR = True
+    CLEAN_SYNC_DIR = False
+    OPEN_QGIS_ON_FINISH = False
+    FIX_GEOM = True
+    
+    # CRS settings
+    SRC_CRS = SRC_CRS_CODE
+    TGT_CRS = TGT_CRS_CODE
+    
+    def __init__(self, base_path: str):
+        self.base = Path(base_path)
+        self.dir_proc = self.base / "02_QGIS_Processing"
+        self.dir_grids = self.dir_proc / "grids"
+        self.dir_out = self.base / "03_QField_Output"
+        self.dir_arch = self.dir_out / "archive"
+        
+        local_temp_root = Path(os.environ.get("LOCALAPPDATA", r"C:\Temp")) / "QGIS_Work"
+        local_temp_root.mkdir(parents=True, exist_ok=True)
+        self.run_temp_dir = Path(tempfile.mkdtemp(prefix="bev2qfield_", dir=str(local_temp_root)))
+    
+    def ensure_dirs(self):
+        """Ensure all required directories exist."""
+        for d in (self.dir_grids, self.dir_out, self.dir_arch, self.run_temp_dir):
+            d.mkdir(parents=True, exist_ok=True)
 
 
-
-# ---------- Hauptlogik ----------
-def main():
-    ensure_dirs()
-    fb = QgsProcessingFeedback()
-    target_crs = QgsCoordinateReferenceSystem(TGT_CRS)
-    transform_ctx = QgsProject.instance().transformContext()
-
-    # Eingabeordner wählen
-    start_dir = os.path.join(BASE, "01_BEV_Rohdaten")
-    dir_raw = QFileDialog.getExistingDirectory(None, "Ordner mit BEV-Rohdaten auswählen", start_dir)
-    if not dir_raw:
-        print("❌ Kein Ordner ausgewählt – Abbruch.")
-        return
-    print(f"📂 Eingabeordner: {dir_raw}", flush=True)
-
-    basename = os.path.basename(dir_raw.rstrip("/\\"))
-    stamp = datetime.datetime.now().strftime("%Y%m%d_%H%M")
-
-    OUT_GPKG = os.path.join(DIR_OUT,  f"kataster_{basename}_qfield.gpkg")
-    OUT_QGZ  = os.path.join(DIR_OUT,  f"kataster_{basename}_qfield.qgz")
-    OUT_RPT  = os.path.join(DIR_OUT,  f"kataster_{basename}_qfield_report.txt")
-
-    ARCH_GPKG = os.path.join(DIR_ARCH, f"kataster_{basename}_qfield_{stamp}.gpkg")
-    ARCH_QGZ  = os.path.join(DIR_ARCH, f"kataster_{basename}_qfield_{stamp}.qgz")
-
-    layers = collect_layers(dir_raw)
-    if not layers:
-        log("Keine Eingabedaten gefunden.")
-        return
-    log(f"{len(layers)} Eingabe-Layer gefunden.")
-
-    ntv2_path = find_ntv2_grid()
-    operation = ""
-    if ntv2_path:
-        operation = (
-            "+proj=pipeline "
-            f"+step +proj=hgridshift +grids={ntv2_path} "
-            "+step +proj=utm +zone=33 +ellps=GRS80 +units=m +no_defs"
+# ---------- Main Processing Class ----------
+class BEVToQField:
+    """Main converter from BEV cadastral data to QField format."""
+    
+    def __init__(self, config: BEVToQFieldConfig):
+        self.config = config
+        self.feedback = QgsProcessingFeedback()
+        self.target_crs = QgsCoordinateReferenceSystem(config.TGT_CRS)
+        self.transform_ctx = QgsProject.instance().transformContext()
+        self.layer_cache: Dict[str, QgsVectorLayer] = {}
+        self.written_layers: List[str] = []
+    
+    def log(self, msg: str):
+        """Log message with timestamp."""
+        ts = datetime.datetime.now().strftime("%H:%M:%S")
+        print(f"[bev2qfield {ts}] {msg}", flush=True)
+    
+    def _safe_name(self, name: str) -> str:
+        """Convert name to safe layer name."""
+        return "".join(ch if ch.isalnum() or ch in "_-" else "_" for ch in name)[:60]
+    
+    def _find_ntv2_grid(self) -> Optional[str]:
+        """Find NTv2 grid file."""
+        cands = sorted(glob.glob(os.path.join(self.config.dir_grids, "**", "*.gsb"), recursive=True))
+        return cands[0].replace("\\", "/") if cands else None
+    
+    def _find_geoid(self) -> Optional[str]:
+        """Find geoid height grid file."""
+        cands = sorted(glob.glob(os.path.join(self.config.dir_grids, "**", GEOID_PATTERN_NAME), recursive=True))
+        return cands[0] if cands else None
+    
+    def _is_valid_layer(self, lyr: QgsVectorLayer) -> bool:
+        """Check if layer is valid and has geometry."""
+        if not lyr.isValid():
+            return False
+        wkt = lyr.wkbType()
+        return QgsWkbTypes.geometryType(wkt) != QgsWkbTypes.UnknownGeometry
+    
+    def _ensure_crs(self, lyr: QgsVectorLayer) -> QgsVectorLayer:
+        """Ensure layer has valid source CRS."""
+        if not lyr.crs().isValid():
+            lyr.setCrs(QgsCoordinateReferenceSystem(self.config.SRC_CRS))
+        return lyr
+    
+    def collect_layers(self, dir_raw: str) -> List[QgsVectorLayer]:
+        """Collect and validate input layers from directory."""
+        files = []
+        for pat in INPUT_PATTERNS:
+            files.extend(glob.glob(os.path.join(dir_raw, "**", pat), recursive=True))
+        
+        layers = []
+        for p in files:
+            lyr = QgsVectorLayer(p, os.path.splitext(os.path.basename(p))[0], "ogr")
+            if self._is_valid_layer(lyr):
+                layers.append(lyr)
+        return layers
+    
+    def _fix_geometries(self, lyr: QgsVectorLayer) -> QgsVectorLayer:
+        """Fix invalid geometries if enabled."""
+        if not self.config.FIX_GEOM or QgsWkbTypes.geometryType(lyr.wkbType()) == QgsWkbTypes.UnknownGeometry:
+            return lyr
+        
+        result = processing.run(
+            "native:fixgeometries",
+            {"INPUT": lyr, "METHOD": 0, "OUTPUT": "TEMPORARY_OUTPUT"},
+            feedback=self.feedback
         )
-        log(f"NTv2 aktiv: {ntv2_path}")
-    else:
-        log("WARN: Kein *.gsb gefunden – NTv2 wird NICHT erzwungen!")
-
-    written = []
-    first_write_done = False
-
-    for idx, src in enumerate(layers, 1):
-        log(f"[{idx}/{len(layers)}] {src.name()}")
-        inlyr = src
-        if not inlyr.crs().isValid():
-            inlyr.setCrs(QgsCoordinateReferenceSystem(SRC_CRS))
-        if FIX_GEOM and QgsWkbTypes.geometryType(inlyr.wkbType()) != QgsWkbTypes.UnknownGeometry:
-            inlyr = processing.run("native:fixgeometries",
-                {"INPUT": inlyr, "METHOD": 0, "OUTPUT": "TEMPORARY_OUTPUT"}, feedback=fb)["OUTPUT"]
-        reproj = reproject_layer(inlyr, target_crs, operation, fb)
-        lname = safe_name(src.name())
-        if write_layer(reproj, TMP_GPKG, lname, not first_write_done, transform_ctx):
-            first_write_done = True
-            written.append(lname)
-
-    if not os.path.exists(TMP_GPKG):
-        log("❌ Abbruchhinweis: kataster_qfield.gpkg existiert nicht – bitte Logs oben prüfen.")
-        return
-
-    try:
-        if os.path.exists(OUT_GPKG):
-            os.remove(OUT_GPKG)
-        shutil.move(TMP_GPKG, OUT_GPKG)
-    except Exception:
-        shutil.copy2(TMP_GPKG, OUT_GPKG)
-    log(f"📦 Output-GPKG bereit: {OUT_GPKG}")
-
-    GEOID_TIF = find_geoid()
-    if GEOID_TIF and os.path.exists(GEOID_TIF):
-        for ln in written:
-            vl = QgsVectorLayer(f"{OUT_GPKG}|layername={ln}", ln, "ogr")
+        return result["OUTPUT"]
+    
+    def _reproject_layer(self, lyr: QgsVectorLayer, operation: str = "") -> QgsVectorLayer:
+        """Reproject layer to target CRS."""
+        return processing.run(
+            "native:reprojectlayer",
+            {
+                "INPUT": lyr,
+                "TARGET_CRS": self.target_crs,
+                "OPERATION": operation,
+                "OUTPUT": "TEMPORARY_OUTPUT"
+            },
+            feedback=self.feedback
+        )["OUTPUT"]
+    
+    def _write_layer(self, vl: QgsVectorLayer, gpkg_path: str, layer_name: str, is_first: bool) -> bool:
+        """Write layer to GeoPackage."""
+        opts = QgsVectorFileWriter.SaveVectorOptions()
+        opts.driverName = "GPKG"
+        opts.layerName = layer_name
+        opts.actionOnExistingFile = (
+            QgsVectorFileWriter.CreateOrOverwriteFile if is_first
+            else QgsVectorFileWriter.CreateOrOverwriteLayer
+        )
+        ret = QgsVectorFileWriter.writeAsVectorFormatV2(vl, gpkg_path, self.transform_ctx, opts)
+        
+        if isinstance(ret, tuple):
+            code, msg = ret
+        else:
+            code, msg = ret, ""
+        
+        if code != QgsVectorFileWriter.NoError:
+            self.log(f"❌ Schreibfehler '{layer_name}': Code {code} {('— ' + msg) if msg else ''}")
+            return False
+        
+        status = 'neu' if is_first else 'update'
+        self.log(f"✔️  geschrieben: {layer_name} ({status})")
+        return True
+    
+    def _build_wmts_layer(self) -> Optional[QgsRasterLayer]:
+        """Build BEV WMTS base layer."""
+        wmts_params = {
+            "contextualWMSLegend": "0",
+            "crs": "EPSG:3857",
+            "dpiMode": "7",
+            "format": "image/jpeg",
+            "layers": "bmaporthofoto30cm",
+            "styles": "normal",
+            "tileMatrixSet": "google3857",
+            "url": "https://www.basemap.at/wmts/1.0.0/WMTSCapabilities.xml",
+        }
+        wmts_uri = "&".join(f"{k}={v}" for k, v in wmts_params.items())
+        
+        ortho = QgsRasterLayer(wmts_uri, WMTS_LAYER_NAME, "wms")
+        if not ortho.isValid():
+            self.log("⚠️  BEV Orthofoto (WMTS) konnte nicht geladen werden – prüfe Internet/URL.")
+            return None
+        return ortho
+    
+    def _build_project(self, gpkg_path: str, layer_names: List[str], out_qgz: str):
+        """Build and save QGIS project from processed layers."""
+        proj = QgsProject.instance()
+        proj.clear()
+        proj.setFileName(out_qgz)
+        root = proj.layerTreeRoot()
+        
+        # Load vector layers
+        for ln in layer_names:
+            vl = QgsVectorLayer(f"{gpkg_path}|layername={ln}", ln, "ogr")
+            if not vl.isValid():
+                self.log(f"⚠️  Layer {ln} konnte nicht geladen werden.")
+                continue
+            
+            # Style polygon layers with transparent fill
+            if vl.geometryType() == QgsWkbTypes.PolygonGeometry:
+                sym = QgsFillSymbol.createSimple({
+                    "color": "0,0,0,0",
+                    "outline_color": "0,0,0,255",
+                    "outline_width": "0.30",
+                    "outline_width_unit": "MM"
+                })
+                vl.setRenderer(QgsSingleSymbolRenderer(sym))
+            
+            proj.addMapLayer(vl)
+        
+        # Add WMTS base layer
+        ortho = self._build_wmts_layer()
+        if ortho:
+            proj.addMapLayer(ortho, False)
+            root.insertLayer(len(root.children()), ortho)
+        
+        # Set project CRS and save
+        proj.setCrs(self.target_crs)
+        if proj.write():
+            self.log(f"Projektdatei erfolgreich geschrieben: {out_qgz}")
+        else:
+            self.log("❌ Fehler beim Schreiben der Projektdatei!")
+    
+    def _apply_geoid_heights(self, gpkg_path: str, geoid_tif: str):
+        """Apply geoid height correction to point layers."""
+        for ln in self.written_layers:
+            vl = QgsVectorLayer(f"{gpkg_path}|layername={ln}", ln, "ogr")
             if not vl.isValid() or vl.geometryType() != QgsWkbTypes.PointGeometry:
                 continue
-            v1 = processing.run("qgis:rastersampling", {
-                "INPUT": vl, "RASTERCOPY": GEOID_TIF,
-                "COLUMN_PREFIX": "N_", "OUTPUT": "TEMPORARY_OUTPUT"
-            }, feedback=fb)["OUTPUT"]
-            v2 = processing.run("native:fieldcalculator", {
-                "INPUT": v1, "FIELD_NAME": "H_orth",
-                "FIELD_TYPE": 0, "FIELD_LENGTH": 20, "FIELD_PRECISION": 3,
-                "FORMULA": "z($geometry) - \"N_Band1\"",
-                "OUTPUT": "TEMPORARY_OUTPUT"
-            }, feedback=fb)["OUTPUT"]
-            write_layer(v2, OUT_GPKG, ln, False, transform_ctx)
-        log(f"Orthometrische Höhen berechnet mit {GEOID_TIF}")
-    else:
-        log("Kein Geoid-Raster gefunden – Höhen bleiben ellipsoidisch.")
-
-    build_project_from_layers(OUT_GPKG, written, target_crs, OUT_QGZ)
-
-    with open(OUT_RPT, "w", encoding="utf-8") as f:
-        f.write(f"BEV→QField Report {datetime.datetime.now().isoformat()}\n")
-        f.write(f"SRC_CRS: {SRC_CRS}\nTGT_CRS: {TGT_CRS}\n")
-        f.write(f"NTV2: {ntv2_path or 'NONE'}\n")
-        f.write(f"GEOID: {GEOID_TIF or 'NONE'}\n")
-        f.write("Layers:\n - " + "\n - ".join(written) + "\n")
-
-    # ---------- Archiv-Kopie ----------
-    try:
-        shutil.copy2(OUT_GPKG, ARCH_GPKG)
-        shutil.copy2(OUT_QGZ,  ARCH_QGZ)
-    except Exception:
-        pass
-
-    log(f"Fertig: {OUT_GPKG}")
-    log(f"Projekt: {OUT_QGZ}")
-    log(f"Report:  {OUT_RPT}")
+            
+            v1 = processing.run(
+                "qgis:rastersampling",
+                {"INPUT": vl, "RASTERCOPY": geoid_tif, "COLUMN_PREFIX": "N_", "OUTPUT": "TEMPORARY_OUTPUT"},
+                feedback=self.feedback
+            )["OUTPUT"]
+            
+            v2 = processing.run(
+                "native:fieldcalculator",
+                {
+                    "INPUT": v1,
+                    "FIELD_NAME": "H_orth",
+                    "FIELD_TYPE": 0,
+                    "FIELD_LENGTH": 20,
+                    "FIELD_PRECISION": 3,
+                    "FORMULA": 'z($geometry) - "N_Band1"',
+                    "OUTPUT": "TEMPORARY_OUTPUT"
+                },
+                feedback=self.feedback
+            )["OUTPUT"]
+            
+            self._write_layer(v2, gpkg_path, ln, False)
+        
+        self.log(f"Orthometrische Höhen berechnet mit {geoid_tif}")
     
-    # --- QField Sync: nur Ordner anlegen / optional leeren ---
-    if MAKE_SYNC_DIR:
-        SYNC_ROOT = os.path.join(BASE, "04_QField_Sync")
-        SYNC_DIR  = os.path.join(SYNC_ROOT, f"kataster_{basename}_qfield")
+    def _write_report(self, ntv2_path: Optional[str], geoid_tif: Optional[str], report_path: str):
+        """Write processing report."""
+        with open(report_path, "w", encoding="utf-8") as f:
+            f.write(f"BEV→QField Report {datetime.datetime.now().isoformat()}\n")
+            f.write(f"SRC_CRS: {self.config.SRC_CRS}\nTGT_CRS: {self.config.TGT_CRS}\n")
+            f.write(f"NTV2: {ntv2_path or 'NONE'}\n")
+            f.write(f"GEOID: {geoid_tif or 'NONE'}\n")
+            f.write("Layers:\n - " + "\n - ".join(self.written_layers) + "\n")
+    
+    def _setup_qfield_sync(self, basename: str):
+        """Create QField sync directory structure."""
+        if not self.config.MAKE_SYNC_DIR:
+            return
+        
+        sync_root = self.config.base / "04_QField_Sync"
+        sync_dir = sync_root / f"kataster_{basename}_qfield"
+        
         try:
-            os.makedirs(SYNC_DIR, exist_ok=True)
-            if CLEAN_SYNC_DIR:
-                for fn in os.listdir(SYNC_DIR):
-                    p = os.path.join(SYNC_DIR, fn)
-                    if os.path.isfile(p):
-                        try: os.remove(p)
-                        except Exception: pass
-            log(f"📁 QField Sync Ordner bereit: {SYNC_DIR}")
+            sync_dir.mkdir(parents=True, exist_ok=True)
+            
+            if self.config.CLEAN_SYNC_DIR:
+                for fn in os.listdir(sync_dir):
+                    p = sync_dir / fn
+                    if p.is_file():
+                        try:
+                            p.unlink()
+                        except Exception:
+                            pass
+            
+            self.log(f"📁 QField Sync Ordner bereit: {sync_dir}")
         except Exception as e:
-            log(f"⚠️ Konnte QField Sync Ordner nicht anlegen: {e}")
-
-    # --- Optional: Projekt in QGIS öffnen ---
-    if OPEN_QGIS_ON_FINISH:
+            self.log(f"⚠️ Konnte QField Sync Ordner nicht anlegen: {e}")
+    
+    def run(self):
+        """Execute main conversion workflow."""
+        self.config.ensure_dirs()
+        
+        # Get input directory
+        start_dir = str(self.config.base / "01_BEV_Rohdaten")
+        dir_raw = QFileDialog.getExistingDirectory(None, "Ordner mit BEV-Rohdaten auswählen", start_dir)
+        if not dir_raw:
+            print("❌ Kein Ordner ausgewählt – Abbruch.")
+            return
+        
+        self.log(f"📂 Eingabeordner: {dir_raw}")
+        
+        basename = os.path.basename(dir_raw.rstrip("/\\"))
+        stamp = datetime.datetime.now().strftime("%Y%m%d_%H%M")
+        
+        out_gpkg = self.config.dir_out / f"kataster_{basename}_qfield.gpkg"
+        out_qgz = self.config.dir_out / f"kataster_{basename}_qfield.qgz"
+        out_rpt = self.config.dir_out / f"kataster_{basename}_qfield_report.txt"
+        arch_gpkg = self.config.dir_arch / f"kataster_{basename}_qfield_{stamp}.gpkg"
+        arch_qgz = self.config.dir_arch / f"kataster_{basename}_qfield_{stamp}.qgz"
+        tmp_gpkg = self.config.run_temp_dir / TEMP_GPKG_NAME
+        
+        # Collect input layers
+        layers = self.collect_layers(dir_raw)
+        if not layers:
+            self.log("Keine Eingabedaten gefunden.")
+            return
+        self.log(f"{len(layers)} Eingabe-Layer gefunden.")
+        
+        # Setup coordinate transformation
+        ntv2_path = self._find_ntv2_grid()
+        operation = ""
+        if ntv2_path:
+            operation = (
+                "+proj=pipeline "
+                f"+step +proj=hgridshift +grids={ntv2_path} "
+                "+step +proj=utm +zone=33 +ellps=GRS80 +units=m +no_defs"
+            )
+            self.log(f"NTv2 aktiv: {ntv2_path}")
+        else:
+            self.log("WARN: Kein *.gsb gefunden – NTv2 wird NICHT erzwungen!")
+        
+        # Process layers
+        first_write = True
+        for idx, src in enumerate(layers, 1):
+            self.log(f"[{idx}/{len(layers)}] {src.name()}")
+            
+            inlyr = self._ensure_crs(src)
+            inlyr = self._fix_geometries(inlyr)
+            reproj = self._reproject_layer(inlyr, operation)
+            
+            lname = self._safe_name(src.name())
+            if self._write_layer(reproj, str(tmp_gpkg), lname, first_write):
+                first_write = False
+                self.written_layers.append(lname)
+        
+        if not tmp_gpkg.exists():
+            self.log("❌ Abbruchhinweis: kataster_qfield.gpkg existiert nicht – bitte Logs oben prüfen.")
+            return
+        
+        # Move output GPKG
         try:
-            os.startfile(OUT_QGZ)  # öffnet das Projekt mit QGIS (Windows)
+            if out_gpkg.exists():
+                out_gpkg.unlink()
+            shutil.move(str(tmp_gpkg), str(out_gpkg))
+        except (FileNotFoundError, PermissionError, shutil.Error) as e:
+            self.log(f"⚠️ Konnte Datei nicht verschieben: {e}, kopiere stattdessen...")
+            shutil.copy2(str(tmp_gpkg), str(out_gpkg))
+        
+        self.log(f"📦 Output-GPKG bereit: {out_gpkg}")
+        
+        # Apply geoid heights if available
+        geoid_tif = self._find_geoid()
+        if geoid_tif and os.path.exists(geoid_tif):
+            self._apply_geoid_heights(str(out_gpkg), geoid_tif)
+        else:
+            self.log("Kein Geoid-Raster gefunden – Höhen bleiben ellipsoidisch.")
+        
+        # Build QGIS project
+        self._build_project(str(out_gpkg), self.written_layers, str(out_qgz))
+        
+        # Write report
+        self._write_report(ntv2_path, geoid_tif, str(out_rpt))
+        
+        # Archive outputs
+        try:
+            shutil.copy2(str(out_gpkg), str(arch_gpkg))
+            shutil.copy2(str(out_qgz), str(arch_qgz))
         except Exception as e:
-            log(f"ℹ️ Konnte QGIS-Projekt nicht automatisch öffnen: {e}")
+            self.log(f"⚠️ Archivieren fehlgeschlagen: {e}")
+        
+        self.log(f"Fertig: {out_gpkg}")
+        self.log(f"Projekt: {out_qgz}")
+        self.log(f"Report:  {out_rpt}")
+        
+        # Setup QField sync directory
+        self._setup_qfield_sync(basename)
+        
+        # Optionally open in QGIS
+        if self.config.OPEN_QGIS_ON_FINISH:
+            try:
+                os.startfile(str(out_qgz))
+            except Exception as e:
+                self.log(f"ℹ️ Konnte QGIS-Projekt nicht automatisch öffnen: {e}")
 
-# ---------- Start / Cleanup ----------
+
+# ---------- Entry Point ----------
 if __name__ == "__main__":
     try:
-        main()
+        base_path = r"C:\Users\Christian\Meine Ablage (ca19770610@gmail.com)\QGIS"
+        config = BEVToQFieldConfig(base_path)
+        converter = BEVToQField(config)
+        converter.run()
     finally:
-        qgs.exitQgis()
+        _qgs_app.exitQgis()
