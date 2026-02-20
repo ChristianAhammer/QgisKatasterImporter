@@ -63,11 +63,12 @@ class BEVToQFieldDialog(QDialog):
         super().__init__(parent)
         self.iface = iface
         self.setWindowTitle("BEV to QField Converter")
-        self.setGeometry(100, 100, 700, 600)
+        self.setGeometry(100, 100, 750, 650)
         
         self.worker_thread = None
         self.converter = None
         self.config = None
+        self.base_path = None  # Will be selected by user
         
         self.init_ui()
     
@@ -89,7 +90,26 @@ class BEVToQFieldDialog(QDialog):
         subtitle_font.setItalic(True)
         subtitle.setFont(subtitle_font)
         layout.addWidget(subtitle)
-        layout.addSpacing(15)
+        layout.addSpacing(10)
+        
+        # Base folder selection
+        folder_group = QGroupBox("Select QGIS Folder")
+        folder_layout = QHBoxLayout()
+        
+        self.folder_path_display = QLabel("(Not selected - please browse)")
+        self.folder_path_display.setStyleSheet("color: #CC0000; font-style: italic; padding: 5px;")
+        self.folder_path_display.setMinimumHeight(30)
+        
+        self.btn_browse_folder = QPushButton("Browse...")
+        self.btn_browse_folder.setMaximumWidth(120)
+        self.btn_browse_folder.clicked.connect(self.browse_base_folder)
+        
+        folder_layout.addWidget(QLabel("Path:"), 0)
+        folder_layout.addWidget(self.folder_path_display, 1)
+        folder_layout.addWidget(self.btn_browse_folder, 0)
+        
+        folder_group.setLayout(folder_layout)
+        layout.addWidget(folder_group)
         
         # Options group
         options_group = QGroupBox("Processing Options")
@@ -119,13 +139,15 @@ class BEVToQFieldDialog(QDialog):
         
         # Info text
         info_text = QLabel(
-            "ℹ️ Make sure you have:\n"
-            "  • Input data in: 01_BEV_Rohdaten/ folder\n"
-            "  • Output will go to: 03_QField_Output/\n"
-            "  • Optional NTv2/geoid grids in: 02_QGIS_Processing/grids/"
+            "ℹ️ Selected folder should contain:\n"
+            "  • 01_BEV_Rohdaten/ (your input files go here)\n"
+            "  • 02_QGIS_Processing/ (optional NTv2/geoid grids)\n"
+            "\n"
+            "After clicking 'Start Conversion', you'll be asked to select\n"
+            "which data folder to convert from 01_BEV_Rohdaten/"
         )
+        info_text.setStyleSheet("background-color: #F0F0F0; padding: 10px; border-radius: 3px;")
         layout.addWidget(info_text)
-        layout.addSpacing(10)
         
         # Progress bar
         self.progress_bar = QProgressBar()
@@ -137,7 +159,7 @@ class BEVToQFieldDialog(QDialog):
         self.output_text = QTextEdit()
         self.output_text.setReadOnly(True)
         self.output_text.setFont(QFont("Courier", 9))
-        self.output_text.setMaximumHeight(250)
+        self.output_text.setMaximumHeight(200)
         layout.addWidget(QLabel("Processing Log:"))
         layout.addWidget(self.output_text)
         
@@ -146,24 +168,52 @@ class BEVToQFieldDialog(QDialog):
         
         self.btn_start = QPushButton("Start Conversion")
         self.btn_start.clicked.connect(self.start_conversion)
-        self.btn_start.setMinimumHeight(35)
+        self.btn_start.setMinimumHeight(40)
+        self.btn_start.setStyleSheet("background-color: #4CAF50; color: white; font-weight: bold;")
         button_layout.addWidget(self.btn_start)
         
         self.btn_cancel = QPushButton("Cancel")
         self.btn_cancel.clicked.connect(self.cancel_conversion)
-        self.btn_cancel.setMinimumHeight(35)
+        self.btn_cancel.setMinimumHeight(40)
         self.btn_cancel.setEnabled(False)
         button_layout.addWidget(self.btn_cancel)
         
         self.btn_close = QPushButton("Close")
         self.btn_close.clicked.connect(self.close)
-        self.btn_close.setMinimumHeight(35)
+        self.btn_close.setMinimumHeight(40)
         button_layout.addWidget(self.btn_close)
         
         layout.addSpacing(10)
         layout.addLayout(button_layout)
         
         self.setLayout(layout)
+    
+    def browse_base_folder(self):
+        """Open folder browser to select base QGIS folder."""
+        # Suggest common paths
+        default_path = Path.home() / "Meine Ablage (ca19770610@gmail.com)" / "QGIS"
+        if not default_path.exists():
+            default_path = Path.home() / "QGIS"
+        if not default_path.exists():
+            default_path = Path.home()
+        
+        folder = QFileDialog.getExistingDirectory(
+            self,
+            "Select QGIS folder (should contain 01_BEV_Rohdaten, 02_QGIS_Processing, etc.)",
+            str(default_path)
+        )
+        
+        if folder:
+            self.base_path = folder
+            # Display the path (truncate if too long)
+            display_path = folder
+            if len(folder) > 70:
+                parts = Path(folder).parts
+                display_path = "..." + str(Path(*parts[-3:]))  # Show last 3 parts
+            
+            self.folder_path_display.setText(display_path)
+            self.folder_path_display.setStyleSheet("color: #000000; font-style: normal; padding: 5px;")
+            self.folder_path_display.setToolTip(folder)  # Show full path on hover
     
     def log_output(self, msg: str):
         """Append message to output text."""
@@ -174,9 +224,20 @@ class BEVToQFieldDialog(QDialog):
     def start_conversion(self):
         """Start the conversion process."""
         try:
-            # Get base path from QGIS settings or use default
-            qsettings = self.iface.mainWindow().findChild(type(None))
-            base_path = r"C:\Users\Christian\Meine Ablage (ca19770610@gmail.com)\QGIS"
+            # Check if user selected a base path
+            if not self.base_path:
+                QMessageBox.warning(
+                    self,
+                    "QGIS Folder Not Selected",
+                    "Please click 'Browse...' to select your QGIS folder first.\n\n"
+                    "It should contain these folders:\n"
+                    "  • 01_BEV_Rohdaten/\n"
+                    "  • 02_QGIS_Processing/\n\n"
+                    "If these don't exist, they will be created."
+                )
+                return
+            
+            base_path = self.base_path
             
             # Check if base path exists
             if not Path(base_path).exists():
@@ -184,7 +245,7 @@ class BEVToQFieldDialog(QDialog):
                     self,
                     "Base Path Not Found",
                     f"QGIS base path not found:\n{base_path}\n\n"
-                    "Please create the directory structure or adjust the path."
+                    "Please create the directory or select a different path."
                 )
                 return
             
@@ -202,6 +263,7 @@ class BEVToQFieldDialog(QDialog):
             
             # Update UI
             self.btn_start.setEnabled(False)
+            self.btn_browse_folder.setEnabled(False)
             self.btn_cancel.setEnabled(True)
             self.progress_bar.setVisible(True)
             self.output_text.clear()
@@ -210,6 +272,9 @@ class BEVToQFieldDialog(QDialog):
             self.log_output(f"Base path: {self.config.base}")
             self.log_output(f"Source CRS: {self.config.SRC_CRS}")
             self.log_output(f"Target CRS: {self.config.TGT_CRS}")
+            self.log_output("")
+            self.log_output("➡️ A folder selection dialog will appear...")
+            self.log_output("   Please select a subfolder from: 01_BEV_Rohdaten/")
             self.log_output("")
             
             # Run in worker thread
@@ -234,6 +299,7 @@ class BEVToQFieldDialog(QDialog):
     def conversion_finished(self):
         """Handle conversion completion."""
         self.btn_start.setEnabled(True)
+        self.btn_browse_folder.setEnabled(True)
         self.btn_cancel.setEnabled(False)
         self.progress_bar.setVisible(False)
         self.log_output("✔️  Conversion complete!")
@@ -242,6 +308,7 @@ class BEVToQFieldDialog(QDialog):
         """Handle conversion error."""
         self.log_output(f"\n❌ ERROR: {error}")
         self.btn_start.setEnabled(True)
+        self.btn_browse_folder.setEnabled(True)
         self.btn_cancel.setEnabled(False)
         self.progress_bar.setVisible(False)
         QgsMessageLog.logMessage(f"Conversion error: {error}", "BEVToQField", 2)
