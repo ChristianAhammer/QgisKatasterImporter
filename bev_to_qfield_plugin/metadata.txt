@@ -1,0 +1,39 @@
+[general]
+name=BEV to QField Converter
+qgisMinimumVersion=3.40
+qgisMaximumVersion=3.99
+description=Convert Austrian BEV (MGI/GK) cadastral data to ETRS89/UTM33N for QField mobile fieldwork
+version=1.0.0
+author=Christian Hammer
+email=ca19770610@gmail.com
+url=https://github.com/ChristianAhammer/QgisKatasterImporter
+tracker=https://github.com/ChristianAhammer/QgisKatasterImporter/issues
+repository=https://github.com/ChristianAhammer/QgisKatasterImporter
+type=Plugin
+icon=icon.png
+category=Data Management
+tags=BEV, cadastral, Austria, GK, UTM, QField, transformation, conversion
+hasProcessingProvider=yes
+
+about=
+ This plugin converts Austrian cadastral data (BEV - Bureau of Statistics/GIS)
+ from MGI/Gauß-Krüger (EPSG:31255) to ETRS89/UTM33N (EPSG:25833) format.
+ .
+ Features:
+  • Batch processing of multiple vector layers (Shapefile, GeoPackage, GeoJSON)
+  • Optional NTv2 grid-based coordinate transformation for accuracy
+  • Orthometric height calculation using geoid grid
+  • Automatic QGIS project creation with styled layers
+  • BEV orthofoto (basemap.at) WMTS layer integration
+  • QField sync directory preparation for mobile fieldwork
+  • Comprehensive processing reports
+
+changelog=
+ Version 1.0.0 (Feb 2026)
+  • Initial release with class-based refactored architecture
+  • Full QGIS 3.44.0 integration tested and verified
+  • Processing provider integration
+  • Menu-based UI for easy access
+
+experimental=False
+deprecated=False
