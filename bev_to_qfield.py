@@ -24,10 +24,20 @@ from PyQt5.QtWidgets import QFileDialog
 import processing
 from processing.core.Processing import Processing
 
-QgsApplication.setPrefixPath(QGIS_PREFIX, True)
-_qgs_app = QgsApplication([], True)
-_qgs_app.initQgis()
-Processing.initialize()
+# Initialize QGIS application
+# If running as plugin, QgsApplication already exists and is initialized
+# If running standalone, we need to create and initialize it
+_qgs_app = QgsApplication.instance()
+_qgs_app_is_standalone = False  # Track if we created the app ourselves
+
+if _qgs_app is None:
+    # Standalone mode - create and initialize QgsApplication
+    QgsApplication.setPrefixPath(QGIS_PREFIX, True)
+    _qgs_app = QgsApplication([], True)
+    _qgs_app.initQgis()
+    Processing.initialize()
+    _qgs_app_is_standalone = True
+# else: Plugin mode - QGIS handles all initialization
 
 # ---------- Constants ----------
 INPUT_PATTERNS = ("*.shp", "*.gpkg", "*.geojson")
@@ -412,4 +422,6 @@ if __name__ == "__main__":
         converter = BEVToQField(config)
         converter.run()
     finally:
-        _qgs_app.exitQgis()
+        # Only exit QGIS if we created the app ourselves (standalone mode)
+        if _qgs_app_is_standalone:
+            _qgs_app.exitQgis()
