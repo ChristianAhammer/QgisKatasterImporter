@@ -189,7 +189,7 @@ GPLv2+ - Same as QGIS
 
 ## 👤 Author
 
-**Christian Hammer**
+**Christian Ahammer**
 - Email: ca19770610@gmail.com
 - GitHub: [@ChristianAhammer](https://github.com/ChristianAhammer)
 

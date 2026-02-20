@@ -183,7 +183,7 @@ Same as QGIS - [GPLv2+](http://www.gnu.org/licenses/gpl-2.0.html)
 
 ## Author
 
-Christian Hammer
+Christian Ahammer
 - Email: ca19770610@gmail.com
 - GitHub: [@ChristianAhammer](https://github.com/ChristianAhammer)
 
