@@ -185,30 +185,37 @@ class BEVToQField:
         return True
     
     def _build_wmts_layer(self) -> Optional[QgsRasterLayer]:
-        """Build BEV WMTS base layer."""
+        """Build BEV WMTS base layer with XYZ tile fallback."""
+        # Try XYZ tile endpoint first (simpler and more reliable with projected CRS)
+        # basemap.at provides XYZ tiles for orthofoto
+        xyz_url = "https://tiles.geoimage.at/tiles/orthofoto/google/{z}/{x}/{y}.jpg"
+        
+        ortho = QgsRasterLayer(f"type=xyz&url={xyz_url}", WMTS_LAYER_NAME, "wms")
+        if ortho.isValid():
+            ortho.setOpacity(1.0)
+            self.log("✓ BEV Orthofoto (XYZ Tiles) geladen")
+            return ortho
+        
+        # Fallback: Try WMTS if XYZ fails
+        self.log("ℹ️  XYZ-Kacheln nicht verfügbar, versuche WMTS...")
         wmts_params = {
             "contextualWMSLegend": "0",
             "crs": "EPSG:3857",
             "dpiMode": "7",
             "format": "image/jpeg",
-            "ignoreGetMapUrl": "1",  # Use WMTS GetTile instead of WMS GetMap
             "layers": "bmaporthofoto30cm",
             "styles": "normal",
             "tileMatrixSet": "google3857",
             "url": "https://www.basemap.at/wmts/1.0.0/WMTSCapabilities.xml",
-            "zmax": "20",  # Max zoom level available
-            "zmin": "0",   # Min zoom level
         }
         wmts_uri = "&".join(f"{k}={v}" for k, v in wmts_params.items())
-        
         ortho = QgsRasterLayer(wmts_uri, WMTS_LAYER_NAME, "wms")
+        
         if not ortho.isValid():
-            self.log("⚠️  BEV Orthofoto (WMTS) konnte nicht geladen werden – prüfe Internet/URL.")
+            self.log("⚠️  BEV Orthofoto konnte nicht geladen werden – Internet erforderlich.")
             return None
         
-        # Ensure layer is visible with proper opacity
         ortho.setOpacity(1.0)
-        
         return ortho
     
     def _build_project(self, gpkg_path: str, layer_names: List[str], out_qgz: str):
@@ -216,9 +223,18 @@ class BEVToQField:
         proj = QgsProject.instance()
         proj.clear()
         proj.setFileName(out_qgz)
+        proj.setCrs(self.target_crs)  # Set CRS FIRST before adding layers
         root = proj.layerTreeRoot()
         
-        # Load vector layers
+        # Add WMTS base layer FIRST (bottom of layer stack)
+        ortho = self._build_wmts_layer()
+        if ortho:
+            proj.addMapLayer(ortho)
+            # Move to bottom of layer tree
+            root.insertLayer(0, proj.removeMapLayer(ortho.id()))
+            self.log("✓ BEV Orthofoto-Layer hinzugefügt")
+        
+        # Load vector layers (on top of base layer)
         for ln in layer_names:
             vl = QgsVectorLayer(f"{gpkg_path}|layername={ln}", ln, "ogr")
             if not vl.isValid():
@@ -236,15 +252,6 @@ class BEVToQField:
                 vl.setRenderer(QgsSingleSymbolRenderer(sym))
             
             proj.addMapLayer(vl)
-        
-        # Add WMTS base layer
-        ortho = self._build_wmts_layer()
-        if ortho:
-            proj.addMapLayer(ortho, False)
-            root.insertLayer(len(root.children()), ortho)
-        
-        # Set project CRS and save
-        proj.setCrs(self.target_crs)
         if proj.write():
             self.log(f"Projektdatei erfolgreich geschrieben: {out_qgz}")
         else:
