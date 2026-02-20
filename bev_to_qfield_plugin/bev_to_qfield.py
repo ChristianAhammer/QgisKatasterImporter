@@ -191,10 +191,13 @@ class BEVToQField:
             "crs": "EPSG:3857",
             "dpiMode": "7",
             "format": "image/jpeg",
+            "ignoreGetMapUrl": "1",  # Use WMTS GetTile instead of WMS GetMap
             "layers": "bmaporthofoto30cm",
             "styles": "normal",
             "tileMatrixSet": "google3857",
             "url": "https://www.basemap.at/wmts/1.0.0/WMTSCapabilities.xml",
+            "zmax": "20",  # Max zoom level available
+            "zmin": "0",   # Min zoom level
         }
         wmts_uri = "&".join(f"{k}={v}" for k, v in wmts_params.items())
         
@@ -202,6 +205,10 @@ class BEVToQField:
         if not ortho.isValid():
             self.log("⚠️  BEV Orthofoto (WMTS) konnte nicht geladen werden – prüfe Internet/URL.")
             return None
+        
+        # Ensure layer is visible with proper opacity
+        ortho.setOpacity(1.0)
+        
         return ortho
     
     def _build_project(self, gpkg_path: str, layer_names: List[str], out_qgz: str):
