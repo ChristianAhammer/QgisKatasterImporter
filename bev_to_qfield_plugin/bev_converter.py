@@ -14,12 +14,7 @@ import os
 from qgis.gui import QgisInterface
 from qgis.core import QgsMessageLog
 
-# Import the converter from parent directory
-import sys
-from pathlib import Path
-sys.path.insert(0, str(Path(__file__).parent.parent))
-
-from bev_to_qfield import BEVToQFieldConfig, BEVToQField
+from .bev_to_qfield import BEVToQFieldConfig, BEVToQField
 
 
 class ConverterWorkerThread(QThread):
