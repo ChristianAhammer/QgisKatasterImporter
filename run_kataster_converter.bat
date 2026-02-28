@@ -150,10 +150,9 @@ echo Using output root from env: !TARGET!
 
 echo.
 call "%OSGEO4W_ROOT%\bin\o4w_env.bat"
-set "SUMMARY_JSON=%TEMP%\kataster_converter_summary_%RANDOM%_%RANDOM%.json"
 set "SUMMARY_TARGET=%TEMP%\kataster_converter_target_%RANDOM%_%RANDOM%.txt"
 
-call "%QGIS_PY%" "%CLI_SCRIPT%" --source "!SOURCE!" --target "!TARGET!" --summary-json "%SUMMARY_JSON%" --summary-target-file "%SUMMARY_TARGET%"
+call "%QGIS_PY%" "%CLI_SCRIPT%" --source "!SOURCE!" --target "!TARGET!" --summary-target-file "%SUMMARY_TARGET%"
 
 set "EXITCODE=%ERRORLEVEL%"
 set "TARGET_GPKG="
@@ -165,9 +164,6 @@ set "SYNC_ROOT="
 set "SYNC_PROJECT_DIR="
 set "UPLOAD_DIR="
 
-if exist "%SUMMARY_JSON%" (
-  del /q "%SUMMARY_JSON%" >nul 2>nul
-)
 if exist "%SUMMARY_TARGET%" (
   set /p TARGET_GPKG=<"%SUMMARY_TARGET%"
   del /q "%SUMMARY_TARGET%" >nul 2>nul
@@ -344,7 +340,6 @@ if errorlevel 1 (
 echo QFieldCloud sync completed successfully.
 echo Summary file:
 echo %CLOUD_SUMMARY%
-if exist "%CLOUD_SUMMARY%" type "%CLOUD_SUMMARY%"
 
 :final
 echo.
