@@ -2,8 +2,10 @@
 # Importiert automatisch nur *.shp-Dateien mit "gst" oder "sgg" im Namen,
 # transformiert sie nach EPSG:4258 und speichert sie in das GPKG des aktuellen Projekts.
 
+import datetime
 import os
 import re
+import shutil
 
 from qgis.PyQt.QtGui import QIcon
 from qgis.PyQt.QtWidgets import QAction, QFileDialog, QMessageBox
@@ -97,6 +99,59 @@ class KatasterConverterPlugin:
             return None, "QGIS-Projektdatei konnte nicht geschrieben werden"
 
         return output_qgz, None
+
+    @staticmethod
+    def _write_report(report_path, source_folder, target_gpkg, output_qgz, imported_layers, skipped_layers, failed_layers):
+        timestamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        lines = [
+            f"Kataster-Konverter Report: {timestamp}",
+            f"Quelle: {source_folder}",
+            f"Ziel-GPKG: {target_gpkg}",
+            f"Ziel-QGZ: {output_qgz or 'nicht erstellt'}",
+            "",
+            f"Importiert ({len(imported_layers)}):",
+        ]
+        lines.extend([f"- {name}" for name in imported_layers] or ["- keine"])
+
+        lines.append("")
+        lines.append(f"Übersprungen ({len(skipped_layers)}):")
+        lines.extend([f"- {item}" for item in skipped_layers] or ["- keine"])
+
+        lines.append("")
+        lines.append(f"Fehlgeschlagen ({len(failed_layers)}):")
+        lines.extend([f"- {item}" for item in failed_layers] or ["- keine"])
+
+        try:
+            with open(report_path, "w", encoding="utf-8") as handle:
+                handle.write("\n".join(lines) + "\n")
+            return None
+        except OSError as err:
+            return str(err)
+
+    @staticmethod
+    def _archive_outputs(target_gpkg, output_qgz, report_path):
+        output_dir = os.path.dirname(target_gpkg)
+        if os.path.basename(output_dir).lower() != "03_qfield_output":
+            return [], None
+
+        archive_dir = os.path.join(output_dir, "archive")
+        try:
+            os.makedirs(archive_dir, exist_ok=True)
+            stamp = datetime.datetime.now().strftime("%Y%m%d_%H%M")
+            base = os.path.splitext(os.path.basename(target_gpkg))[0]
+
+            archived = []
+            for src in [target_gpkg, output_qgz, report_path]:
+                if not src or not os.path.exists(src):
+                    continue
+                ext = os.path.splitext(src)[1]
+                dst = os.path.join(archive_dir, f"{base}_{stamp}{ext}")
+                shutil.copy2(src, dst)
+                archived.append(dst)
+
+            return archived, None
+        except OSError as err:
+            return [], str(err)
 
     def run_kataster_converter(self):
         folder = QFileDialog.getExistingDirectory(None, "Wähle Ordner mit Katasterdaten", self.last_folder)
@@ -236,6 +291,24 @@ class KatasterConverterPlugin:
             if project_error:
                 failed_layers.append(f"Projektdatei: {project_error}")
 
+        report_path = os.path.splitext(target_gpkg)[0] + "_report.txt"
+        report_error = self._write_report(
+            report_path,
+            folder,
+            target_gpkg,
+            output_qgz,
+            imported_layers,
+            skipped_layers,
+            failed_layers,
+        )
+        if report_error:
+            failed_layers.append(f"Reportdatei: {report_error}")
+            report_path = None
+
+        archived_files, archive_error = self._archive_outputs(target_gpkg, output_qgz, report_path)
+        if archive_error:
+            failed_layers.append(f"Archivierung: {archive_error}")
+
         if project_is_saved:
             QgsProject.instance().write()
 
@@ -249,6 +322,10 @@ class KatasterConverterPlugin:
 
         if output_qgz:
             summary_lines.append(f"Ziel-QGZ: {output_qgz}")
+        if report_path:
+            summary_lines.append(f"Report: {report_path}")
+        if archived_files:
+            summary_lines.append(f"Archiv: {os.path.dirname(archived_files[0])} ({len(archived_files)} Datei(en))")
 
         if skipped_layers:
             summary_lines.append("")
