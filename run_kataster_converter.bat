@@ -232,8 +232,7 @@ if not defined UPLOAD_DIR if defined PROJECT_DIR (
 )
 
 echo.
-set /p SYNC_CLOUD=Upload converted project to QFieldCloud now? ^(y/N^): 
-if /I not "%SYNC_CLOUD%"=="y" if /I not "%SYNC_CLOUD%"=="yes" goto :final
+echo Auto-upload to QFieldCloud is enabled.
 
 if not defined UPLOAD_DIR (
   echo ERROR: Could not detect project folder for upload.
