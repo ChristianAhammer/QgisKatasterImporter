@@ -1,6 +1,6 @@
-# QGIS Plugin Script: Kataster-Konverter (EPSG:31255 → EPSG:4258)
+# QGIS Plugin Script: Kataster-Konverter (EPSG:31255 → EPSG:25833)
 # Importiert automatisch nur *.shp-Dateien mit "gst" oder "sgg" im Namen,
-# transformiert sie nach EPSG:4258 und speichert sie in das GPKG des aktuellen Projekts.
+# transformiert sie nach EPSG:25833 und speichert sie in das GPKG des aktuellen Projekts.
 
 import datetime
 import os
@@ -36,7 +36,7 @@ class KatasterConverterPlugin:
 
     def initGui(self):
         icon = QIcon()
-        self.action = QAction(icon, "Kataster-Konverter (31255 → 4258)", self.iface.mainWindow())
+        self.action = QAction(icon, "Kataster-Konverter (31255 → 25833)", self.iface.mainWindow())
         self.action.triggered.connect(self.run_kataster_converter)
         self.iface.addToolBarIcon(self.action)
         self.iface.addPluginToMenu("&Kataster-Konverter", self.action)
@@ -283,7 +283,7 @@ class KatasterConverterPlugin:
         print(f"Ziel-GPKG: {target_gpkg}")
 
         crs_source = QgsCoordinateReferenceSystem("EPSG:31255")
-        crs_target = QgsCoordinateReferenceSystem("EPSG:4258")
+        crs_target = QgsCoordinateReferenceSystem("EPSG:25833")
         transform_context: QgsCoordinateTransformContext = QgsProject.instance().transformContext()
         coordinate_transform = QgsCoordinateTransform(crs_source, crs_target, transform_context)
 
@@ -318,7 +318,7 @@ class KatasterConverterPlugin:
                 skipped_layers.append(f"{filename}: nicht unterstützter Geometrietyp")
                 continue
 
-            reprojected = QgsVectorLayer(f"{geometry}?crs=EPSG:4258", layer_name, "memory")
+            reprojected = QgsVectorLayer(f"{geometry}?crs=EPSG:25833", layer_name, "memory")
             reprojected_data: QgsVectorDataProvider = reprojected.dataProvider()
             reprojected_data.addAttributes(layer.fields())
             reprojected.updateFields()

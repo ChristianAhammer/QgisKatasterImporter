@@ -233,7 +233,7 @@ def convert(source_folder, target_gpkg):
         raise RuntimeError(f'Kein Schreibzugriff auf Verzeichnis: {gpkg_folder}')
 
     crs_source = QgsCoordinateReferenceSystem('EPSG:31255')
-    crs_target = QgsCoordinateReferenceSystem('EPSG:4258')
+    crs_target = QgsCoordinateReferenceSystem('EPSG:25833')
     transform_context = QgsCoordinateTransformContext()
     coordinate_transform = QgsCoordinateTransform(crs_source, crs_target, transform_context)
 
@@ -272,7 +272,7 @@ def convert(source_folder, target_gpkg):
             skipped_layers.append(f'{filename}: nicht unterstuetzter Geometrietyp')
             continue
 
-        reprojected = QgsVectorLayer(f'{geometry}?crs=EPSG:4258', layer_name, 'memory')
+        reprojected = QgsVectorLayer(f'{geometry}?crs=EPSG:25833', layer_name, 'memory')
         reprojected_data: QgsVectorDataProvider = reprojected.dataProvider()
         reprojected_data.addAttributes(layer.fields())
         reprojected.updateFields()
