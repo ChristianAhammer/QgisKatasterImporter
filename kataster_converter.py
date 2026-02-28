@@ -2,23 +2,25 @@
 # Importiert automatisch nur *.shp-Dateien mit "gst" oder "sgg" im Namen,
 # transformiert sie nach EPSG:4258 und speichert sie in das GPKG des aktuellen Projekts.
 
-from qgis.PyQt.QtWidgets import QAction, QFileDialog, QMessageBox
-from qgis.PyQt.QtGui import QIcon
-from qgis.core import (
-    QgsVectorLayer,
-    QgsProject,
-    QgsCoordinateReferenceSystem,
-    QgsVectorFileWriter,
-    QgsCoordinateTransformContext,
-    QgsCoordinateTransform,
-    QgsWkbTypes,
-    QgsSymbol,
-    QgsSingleSymbolRenderer,
-    QgsFeature,
-    QgsVectorDataProvider
-)
 import os
-import time
+import re
+
+from qgis.PyQt.QtGui import QIcon
+from qgis.PyQt.QtWidgets import QAction, QFileDialog, QMessageBox
+from qgis.core import (
+    QgsCoordinateReferenceSystem,
+    QgsCoordinateTransform,
+    QgsCoordinateTransformContext,
+    QgsFeature,
+    QgsProject,
+    QgsSingleSymbolRenderer,
+    QgsSymbol,
+    QgsVectorDataProvider,
+    QgsVectorFileWriter,
+    QgsVectorLayer,
+    QgsWkbTypes,
+)
+
 
 class KatasterConverterPlugin:
     def __init__(self, iface):
@@ -37,6 +39,25 @@ class KatasterConverterPlugin:
         if self.action:
             self.iface.removePluginMenu("&Kataster-Konverter", self.action)
             self.iface.removeToolBarIcon(self.action)
+
+    @staticmethod
+    def _is_kataster_shapefile(filename):
+        lower = filename.lower()
+        if not lower.endswith(".shp"):
+            return False
+
+        base = os.path.splitext(lower)[0]
+        # Matches gst/sgg as a separate token (e.g. _gst_, -sgg, gst1), avoids incidental matches like "august".
+        return re.search(r"(^|[^a-z0-9])(gst|sgg)([^a-z0-9]|$)", base) is not None
+
+    @staticmethod
+    def _memory_geometry_for(layer):
+        geometry_type = QgsWkbTypes.geometryType(layer.wkbType())
+        if geometry_type == QgsWkbTypes.PolygonGeometry:
+            return "MultiPolygon"
+        if geometry_type == QgsWkbTypes.PointGeometry:
+            return "Point"
+        return None
 
     def run_kataster_converter(self):
         folder = QFileDialog.getExistingDirectory(None, "Wähle Ordner mit Katasterdaten", self.last_folder)
@@ -63,47 +84,57 @@ class KatasterConverterPlugin:
         coordinate_transform = QgsCoordinateTransform(crs_source, crs_target, transform_context)
 
         imported_layers = []
+        skipped_layers = []
+        failed_layers = []
 
-        for filename in os.listdir(folder):
-            if not filename.lower().endswith('.shp'):
-                continue
-            if 'gst' not in filename.lower() and 'sgg' not in filename.lower():
+        for filename in sorted(os.listdir(folder)):
+            if not self._is_kataster_shapefile(filename):
                 continue
 
+            lower_filename = filename.lower()
             full_path = os.path.join(folder, filename)
             layer = QgsVectorLayer(full_path, filename, "ogr")
             if not layer.isValid():
-                QMessageBox.warning(None, "Layer ungültig", f"Layer konnte nicht geladen werden: {filename}")
+                failed_layers.append(f"{filename}: Layer konnte nicht geladen werden")
                 continue
 
-            if not layer.crs().isValid() or layer.crs().authid() == '':
+            if not layer.crs().isValid() or layer.crs().authid() == "":
                 layer.setCrs(crs_source)
-
-            print(f"Lade: {filename} → gültig: {layer.isValid()} → {layer.crs().authid()}")
 
             layer_name = os.path.splitext(filename)[0]
             uri = f"{target_gpkg}|layername={layer_name}"
 
-            # Reprojektion
-            geometry_type = QgsWkbTypes.displayString(layer.wkbType()).lower()
-            geometry = "MultiPolygon" if "polygon" in geometry_type else "Point"
+            geometry = self._memory_geometry_for(layer)
+            if geometry is None:
+                skipped_layers.append(f"{filename}: nicht unterstützter Geometrietyp")
+                continue
+
             reprojected = QgsVectorLayer(f"{geometry}?crs=EPSG:4258", layer_name, "memory")
             reprojected_data: QgsVectorDataProvider = reprojected.dataProvider()
             reprojected_data.addAttributes(layer.fields())
             reprojected.updateFields()
 
+            feature_error = None
             for feat in layer.getFeatures():
                 new_feat = QgsFeature()
                 new_feat.setFields(reprojected.fields())
                 new_feat.setAttributes(feat.attributes())
                 geom = feat.geometry()
-                geom.transform(coordinate_transform)
+                transform_status = geom.transform(coordinate_transform)
+                if transform_status != 0:
+                    feature_error = f"Geometrie-Transform fehlgeschlagen (Code {transform_status})"
+                    break
                 new_feat.setGeometry(geom)
-                reprojected_data.addFeature(new_feat)
+                if not reprojected_data.addFeature(new_feat):
+                    feature_error = "Feature konnte nicht in den Reprojektions-Layer geschrieben werden"
+                    break
+
+            if feature_error:
+                failed_layers.append(f"{filename}: {feature_error}")
+                continue
 
             reprojected.updateExtents()
 
-            # Export ins GPKG
             options = QgsVectorFileWriter.SaveVectorOptions()
             options.driverName = "GPKG"
             options.layerName = layer_name
@@ -115,22 +146,21 @@ class KatasterConverterPlugin:
                 reprojected,
                 target_gpkg,
                 transform_context,
-                options
+                options,
             )
 
             if err != QgsVectorFileWriter.NoError:
-                print(f"Fehler beim Exportieren von {layer_name}: {msg}")
-                QMessageBox.warning(None, "Exportfehler", f"Fehler beim Exportieren von {layer_name}: {msg}")
+                failed_layers.append(f"{filename}: Exportfehler ({msg})")
                 continue
 
             loaded_layer = QgsVectorLayer(uri, layer_name, "ogr")
             if not loaded_layer.isValid():
-                print(f"Fehler beim Laden von {layer_name} aus GPKG")
+                failed_layers.append(f"{filename}: Konnte nach Export nicht aus GPKG geladen werden")
                 continue
 
-            if 'gst' in filename.lower() and QgsWkbTypes.geometryType(loaded_layer.wkbType()) == QgsWkbTypes.PolygonGeometry:
+            if "gst" in lower_filename and QgsWkbTypes.geometryType(loaded_layer.wkbType()) == QgsWkbTypes.PolygonGeometry:
                 symbol = QgsSymbol.defaultSymbol(QgsWkbTypes.PolygonGeometry)
-                if symbol and hasattr(symbol.symbolLayer(0), 'setBrushStyle'):
+                if symbol and hasattr(symbol.symbolLayer(0), "setBrushStyle"):
                     symbol.symbolLayer(0).setBrushStyle(0)  # Qt.NoBrush
                 renderer = QgsSingleSymbolRenderer(symbol)
                 loaded_layer.setRenderer(renderer)
@@ -138,17 +168,36 @@ class KatasterConverterPlugin:
             QgsProject.instance().addMapLayer(loaded_layer)
             imported_layers.append(layer_name)
 
-        # Zeitstempel des GPKG anpassen (damit QFieldCloud erkennt: geändert)
         try:
             os.utime(target_gpkg, None)
-        except Exception as e:
-            print(f"Fehler beim Aktualisieren des GPKG-Zeitstempels: {e}")
+        except OSError as err:
+            failed_layers.append(f"Zeitstempel konnte nicht aktualisiert werden: {err}")
 
-        # Projekt speichern
         QgsProject.instance().write()
 
-        QMessageBox.information(
-            None,
-            "Fertig",
-            f"Alle passenden Kataster-Layer wurden (nach EPSG:4258) in das Projekt-GPKG exportiert und geladen:\n\n{target_gpkg}\n\n⚠ Hinweis: Falls du QFieldCloud nutzt, bitte manuell synchronisieren!"
-        )
+        summary_lines = [
+            f"Importiert: {len(imported_layers)} Layer",
+            f"Übersprungen: {len(skipped_layers)}",
+            f"Fehlgeschlagen: {len(failed_layers)}",
+            "",
+            f"Ziel-GPKG: {target_gpkg}",
+        ]
+
+        if skipped_layers:
+            summary_lines.append("")
+            summary_lines.append("Übersprungene Dateien:")
+            summary_lines.extend(skipped_layers[:10])
+            if len(skipped_layers) > 10:
+                summary_lines.append(f"... und {len(skipped_layers) - 10} weitere")
+
+        if failed_layers:
+            summary_lines.append("")
+            summary_lines.append("Fehler:")
+            summary_lines.extend(failed_layers[:10])
+            if len(failed_layers) > 10:
+                summary_lines.append(f"... und {len(failed_layers) - 10} weitere")
+
+        summary_lines.append("")
+        summary_lines.append("Hinweis: Falls du QFieldCloud nutzt, bitte manuell synchronisieren!")
+
+        QMessageBox.information(None, "Kataster-Konverter", "\n".join(summary_lines))
