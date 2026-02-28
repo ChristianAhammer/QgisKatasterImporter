@@ -71,7 +71,8 @@ class KatasterConverterPlugin:
         if project_is_saved:
             target_gpkg = os.path.splitext(project_path)[0] + ".gpkg"
         else:
-            default_gpkg = os.path.join(folder, "kataster_output.gpkg")
+            folder_name = os.path.basename(os.path.normpath(folder)) or "kataster_output"
+            default_gpkg = os.path.join(folder, f"{folder_name}.gpkg")
             target_gpkg, _ = QFileDialog.getSaveFileName(
                 None,
                 "Ziel-GPKG wählen",
