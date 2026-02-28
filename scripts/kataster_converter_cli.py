@@ -210,6 +210,13 @@ def archive_outputs(target_gpkg, output_qgz, report_path):
         return [], str(err)
 
 
+def _path_action(existed_before, path, kind):
+    if not path:
+        return None
+    action = 'Aktualisiert' if existed_before else 'Erstellt'
+    return {'action': action, 'kind': kind, 'path': os.path.normpath(path)}
+
+
 def convert(source_folder, target_gpkg):
     if not os.path.isdir(source_folder):
         raise RuntimeError(f'Quellordner nicht gefunden: {source_folder}')
@@ -219,6 +226,7 @@ def convert(source_folder, target_gpkg):
         target_gpkg += '.gpkg'
 
     gpkg_folder = os.path.dirname(target_gpkg)
+    gpkg_folder_existed_before = os.path.isdir(gpkg_folder)
     os.makedirs(gpkg_folder, exist_ok=True)
 
     if not os.access(gpkg_folder, os.W_OK):
@@ -232,7 +240,17 @@ def convert(source_folder, target_gpkg):
     imported_layers = []
     skipped_layers = []
     failed_layers = []
+    path_actions = []
+
     gpkg_exists = os.path.exists(target_gpkg)
+    target_gpkg_existed_before = gpkg_exists
+    output_qgz_path = os.path.splitext(target_gpkg)[0] + '.qgz'
+    output_qgz_existed_before = os.path.exists(output_qgz_path)
+    report_path = os.path.splitext(target_gpkg)[0] + '_report.txt'
+    report_existed_before = os.path.exists(report_path)
+    output_dir = os.path.dirname(target_gpkg)
+    archive_dir = os.path.join(output_dir, 'archive')
+    archive_dir_existed_before = os.path.isdir(archive_dir)
 
     for filename in sorted(os.listdir(source_folder)):
         if not is_kataster_shapefile(filename):
@@ -333,7 +351,6 @@ def convert(source_folder, target_gpkg):
         if project_error:
             failed_layers.append(f'Projektdatei: {project_error}')
 
-    report_path = os.path.splitext(target_gpkg)[0] + '_report.txt'
     try:
         write_report(
             report_path,
@@ -352,6 +369,29 @@ def convert(source_folder, target_gpkg):
     if archive_error:
         failed_layers.append(f'Archivierung: {archive_error}')
 
+    if not gpkg_folder_existed_before and os.path.isdir(gpkg_folder):
+        path_actions.append({'action': 'Erstellt', 'kind': 'Ordner', 'path': os.path.normpath(gpkg_folder)})
+
+    gpkg_action = _path_action(target_gpkg_existed_before, target_gpkg, 'Datei')
+    if gpkg_action and os.path.exists(target_gpkg):
+        path_actions.append(gpkg_action)
+
+    if output_qgz and os.path.exists(output_qgz):
+        qgz_action = _path_action(output_qgz_existed_before, output_qgz, 'Datei')
+        if qgz_action:
+            path_actions.append(qgz_action)
+
+    if report_path and os.path.exists(report_path):
+        report_action = _path_action(report_existed_before, report_path, 'Datei')
+        if report_action:
+            path_actions.append(report_action)
+
+    if archived_files:
+        if not archive_dir_existed_before and os.path.isdir(archive_dir):
+            path_actions.append({'action': 'Erstellt', 'kind': 'Ordner', 'path': os.path.normpath(archive_dir)})
+        for archived_path in archived_files:
+            path_actions.append({'action': 'Erstellt', 'kind': 'Datei', 'path': os.path.normpath(archived_path)})
+
     return {
         'target_gpkg': target_gpkg,
         'output_qgz': output_qgz,
@@ -360,6 +400,7 @@ def convert(source_folder, target_gpkg):
         'skipped_layers': skipped_layers,
         'failed_layers': failed_layers,
         'archived_files': archived_files,
+        'path_actions': path_actions,
     }
 
 
@@ -388,6 +429,22 @@ def print_summary(result):
         print(f"Report: {result['report_path']}")
     if result['archived_files']:
         print(f"Archiv: {os.path.dirname(result['archived_files'][0])} ({len(result['archived_files'])} Datei(en))")
+
+    path_actions = result.get('path_actions') or []
+    if path_actions:
+        print('')
+        print(colorize('Dateisystem-Aenderungen:', COLOR_GREEN))
+        for item in path_actions:
+            action = item.get('action', 'Aenderung')
+            kind = item.get('kind', 'Pfad')
+            path = item.get('path', '')
+            line = f'{action} {kind}: {path}'
+            if action == 'Erstellt':
+                print(colorize(line, COLOR_GREEN))
+            elif action == 'Aktualisiert':
+                print(colorize(line, COLOR_YELLOW))
+            else:
+                print(line)
 
     if result['skipped_layers']:
         print('')
