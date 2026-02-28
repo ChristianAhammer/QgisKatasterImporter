@@ -7,6 +7,7 @@ Run via QGIS Python environment (e.g. python-qgis-ltr.bat):
 
 import argparse
 import datetime
+import json
 import os
 import re
 import shutil
@@ -176,6 +177,7 @@ def convert(source_folder, target_gpkg):
     imported_layers = []
     skipped_layers = []
     failed_layers = []
+    gpkg_exists = os.path.exists(target_gpkg)
 
     for filename in sorted(os.listdir(source_folder)):
         if not is_kataster_shapefile(filename):
@@ -227,7 +229,10 @@ def convert(source_folder, target_gpkg):
         options.driverName = 'GPKG'
         options.layerName = layer_name
         options.fileEncoding = 'UTF-8'
-        options.actionOnExistingFile = QgsVectorFileWriter.CreateOrOverwriteLayer
+        if gpkg_exists:
+            options.actionOnExistingFile = QgsVectorFileWriter.CreateOrOverwriteLayer
+        else:
+            options.actionOnExistingFile = QgsVectorFileWriter.CreateOrOverwriteFile
         options.destinationCrs = crs_target
 
         err, msg = QgsVectorFileWriter.writeAsVectorFormatV2(
@@ -240,6 +245,8 @@ def convert(source_folder, target_gpkg):
         if err != QgsVectorFileWriter.NoError:
             failed_layers.append(f'{filename}: Exportfehler ({msg})')
             continue
+
+        gpkg_exists = True
 
         loaded_layer = QgsVectorLayer(f'{target_gpkg}|layername={layer_name}', layer_name, 'ogr')
         if not loaded_layer.isValid():
@@ -331,6 +338,8 @@ def parse_args(argv):
     parser = argparse.ArgumentParser(description='Headless Kataster converter (PyQGIS).')
     parser.add_argument('--source', required=True, help='Path to source folder with shapefiles')
     parser.add_argument('--target', help='Path to target GPKG file (.gpkg)')
+    parser.add_argument('--summary-json', help='Optional output file for machine-readable summary json')
+    parser.add_argument('--summary-target-file', help='Optional output file containing target_gpkg path')
     return parser.parse_args(argv)
 
 
@@ -345,6 +354,12 @@ def main(argv):
     try:
         result = convert(source_folder, target_gpkg)
         print_summary(result)
+        if args.summary_json:
+            with open(args.summary_json, 'w', encoding='utf-8') as handle:
+                json.dump(result, handle, ensure_ascii=False, indent=2)
+        if args.summary_target_file:
+            with open(args.summary_target_file, 'w', encoding='utf-8') as handle:
+                handle.write(result['target_gpkg'] + '\n')
         return 1 if result['failed_layers'] else 0
     finally:
         qgs.exitQgis()

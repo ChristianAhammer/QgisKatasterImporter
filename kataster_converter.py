@@ -64,6 +64,24 @@ class KatasterConverterPlugin:
         return None
 
     @staticmethod
+    def _is_kataster_project_layer_name(layer_name):
+        lower = (layer_name or "").lower()
+        return re.search(r"(?<![a-z])(fpt|gnr|gst|nfl|nsl|nsy|sgg|ssb|vgg)(?![a-z])", lower) is not None
+
+    def _remove_existing_kataster_layers_from_project(self):
+        project = QgsProject.instance()
+        remove_ids = []
+        for layer_id, layer in project.mapLayers().items():
+            if not isinstance(layer, QgsVectorLayer):
+                continue
+            if not self._is_kataster_project_layer_name(layer.name()):
+                continue
+            remove_ids.append(layer_id)
+
+        if remove_ids:
+            project.removeMapLayers(remove_ids)
+
+    @staticmethod
     def _default_unsaved_output_path(source_folder):
         folder_norm = os.path.normpath(source_folder)
         folder_name = re.split(r"[\\/]+", folder_norm.rstrip("\\/"))[-1] or "kataster_output"
@@ -222,6 +240,10 @@ class KatasterConverterPlugin:
         skipped_layers = []
         failed_layers = []
 
+        # Avoid old converted layers masking the current GST/SGG output.
+        self._remove_existing_kataster_layers_from_project()
+        gpkg_exists = os.path.exists(target_gpkg)
+
         for filename in sorted(os.listdir(folder)):
             if not self._is_kataster_shapefile(filename):
                 continue
@@ -255,6 +277,7 @@ class KatasterConverterPlugin:
                 new_feat.setFields(reprojected.fields())
                 new_feat.setAttributes(feat.attributes())
                 geom = feat.geometry()
+
                 transform_status = geom.transform(coordinate_transform)
                 if transform_status != 0:
                     feature_error = f"Geometrie-Transform fehlgeschlagen (Code {transform_status})"
@@ -274,7 +297,10 @@ class KatasterConverterPlugin:
             options.driverName = "GPKG"
             options.layerName = layer_name
             options.fileEncoding = "UTF-8"
-            options.actionOnExistingFile = QgsVectorFileWriter.CreateOrOverwriteLayer
+            if gpkg_exists:
+                options.actionOnExistingFile = QgsVectorFileWriter.CreateOrOverwriteLayer
+            else:
+                options.actionOnExistingFile = QgsVectorFileWriter.CreateOrOverwriteFile
             options.destinationCrs = crs_target
 
             err, msg = QgsVectorFileWriter.writeAsVectorFormatV2(
@@ -287,6 +313,8 @@ class KatasterConverterPlugin:
             if err != QgsVectorFileWriter.NoError:
                 failed_layers.append(f"{filename}: Exportfehler ({msg})")
                 continue
+
+            gpkg_exists = True
 
             loaded_layer = QgsVectorLayer(uri, layer_name, "ogr")
             if not loaded_layer.isValid():
