@@ -73,6 +73,31 @@ class KatasterConverterPlugin:
 
         return os.path.join(output_root, f"kataster_{folder_name}_qfield.gpkg")
 
+    @staticmethod
+    def _write_output_project(gpkg_path, layer_names, target_crs):
+        output_qgz = os.path.splitext(gpkg_path)[0] + ".qgz"
+        output_project = QgsProject()
+        output_project.setFileName(output_qgz)
+        output_project.setCrs(target_crs)
+
+        for layer_name in layer_names:
+            layer = QgsVectorLayer(f"{gpkg_path}|layername={layer_name}", layer_name, "ogr")
+            if not layer.isValid():
+                return None, f"Layer konnte nicht aus GPKG geladen werden: {layer_name}"
+
+            if "gst" in layer_name.lower() and QgsWkbTypes.geometryType(layer.wkbType()) == QgsWkbTypes.PolygonGeometry:
+                symbol = QgsSymbol.defaultSymbol(QgsWkbTypes.PolygonGeometry)
+                if symbol and hasattr(symbol.symbolLayer(0), "setBrushStyle"):
+                    symbol.symbolLayer(0).setBrushStyle(0)  # Qt.NoBrush
+                layer.setRenderer(QgsSingleSymbolRenderer(symbol))
+
+            output_project.addMapLayer(layer)
+
+        if not output_project.write():
+            return None, "QGIS-Projektdatei konnte nicht geschrieben werden"
+
+        return output_qgz, None
+
     def run_kataster_converter(self):
         folder = QFileDialog.getExistingDirectory(None, "Wähle Ordner mit Katasterdaten", self.last_folder)
         if not folder:
@@ -205,6 +230,12 @@ class KatasterConverterPlugin:
         except OSError as err:
             failed_layers.append(f"Zeitstempel konnte nicht aktualisiert werden: {err}")
 
+        output_qgz = None
+        if imported_layers:
+            output_qgz, project_error = self._write_output_project(target_gpkg, imported_layers, crs_target)
+            if project_error:
+                failed_layers.append(f"Projektdatei: {project_error}")
+
         if project_is_saved:
             QgsProject.instance().write()
 
@@ -215,6 +246,9 @@ class KatasterConverterPlugin:
             "",
             f"Ziel-GPKG: {target_gpkg}",
         ]
+
+        if output_qgz:
+            summary_lines.append(f"Ziel-QGZ: {output_qgz}")
 
         if skipped_layers:
             summary_lines.append("")
