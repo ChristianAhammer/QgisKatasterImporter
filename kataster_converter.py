@@ -6,6 +6,7 @@ import datetime
 import os
 import re
 import shutil
+import sqlite3
 
 from qgis.PyQt.QtGui import QIcon
 from qgis.PyQt.QtWidgets import QAction, QFileDialog, QMessageBox
@@ -49,8 +50,9 @@ class KatasterConverterPlugin:
             return False
 
         base = os.path.splitext(lower)[0]
-        # Matches gst/sgg as a separate token (e.g. _gst_, -sgg, gst1), avoids incidental matches like "august".
-        return re.search(r"(^|[^a-z0-9])(gst|sgg)([^a-z0-9]|$)", base) is not None
+        # Match GST/SGG only when not embedded in a larger word,
+        # while still allowing cadastral names like 44106GST_V2.
+        return re.search(r"(?<![a-z])(gst|sgg)(?![a-z])", base) is not None
 
     @staticmethod
     def _memory_geometry_for(layer):
@@ -99,6 +101,27 @@ class KatasterConverterPlugin:
             return None, "QGIS-Projektdatei konnte nicht geschrieben werden"
 
         return output_qgz, None
+
+    @staticmethod
+    def _list_gpkg_layers(gpkg_path):
+        if not os.path.exists(gpkg_path):
+            return [], f"GPKG nicht gefunden: {gpkg_path}"
+
+        try:
+            with sqlite3.connect(gpkg_path) as conn:
+                cursor = conn.cursor()
+                cursor.execute(
+                    """
+                    SELECT table_name
+                    FROM gpkg_contents
+                    WHERE data_type = 'features'
+                    ORDER BY table_name
+                    """
+                )
+                rows = cursor.fetchall()
+            return [row[0] for row in rows], None
+        except sqlite3.Error as err:
+            return [], f"GPKG-Layerliste konnte nicht gelesen werden: {err}"
 
     @staticmethod
     def _write_report(report_path, source_folder, target_gpkg, output_qgz, imported_layers, skipped_layers, failed_layers):
@@ -286,10 +309,31 @@ class KatasterConverterPlugin:
             failed_layers.append(f"Zeitstempel konnte nicht aktualisiert werden: {err}")
 
         output_qgz = None
-        if imported_layers:
-            output_qgz, project_error = self._write_output_project(target_gpkg, imported_layers, crs_target)
-            if project_error:
-                failed_layers.append(f"Projektdatei: {project_error}")
+        desired_output_qgz = os.path.splitext(target_gpkg)[0] + ".qgz"
+        active_project = QgsProject.instance()
+
+        # For initially unsaved sessions, always bind the active project
+        # to the output folder project path (not any temporary QGIS path).
+        if not project_is_saved:
+            active_project.setFileName(desired_output_qgz)
+
+        if active_project.fileName():
+            output_qgz = active_project.fileName()
+            if not active_project.write():
+                failed_layers.append("Projektdatei: Aktuelles QGIS-Projekt konnte nicht geschrieben werden")
+                output_qgz = None
+
+        if not output_qgz:
+            qgz_layers = list(imported_layers)
+            if not qgz_layers:
+                qgz_layers, list_error = self._list_gpkg_layers(target_gpkg)
+                if list_error:
+                    failed_layers.append(f"Projektdatei: {list_error}")
+
+            if qgz_layers:
+                output_qgz, project_error = self._write_output_project(target_gpkg, qgz_layers, crs_target)
+                if project_error:
+                    failed_layers.append(f"Projektdatei: {project_error}")
 
         report_path = os.path.splitext(target_gpkg)[0] + "_report.txt"
         report_error = self._write_report(
@@ -308,9 +352,6 @@ class KatasterConverterPlugin:
         archived_files, archive_error = self._archive_outputs(target_gpkg, output_qgz, report_path)
         if archive_error:
             failed_layers.append(f"Archivierung: {archive_error}")
-
-        if project_is_saved:
-            QgsProject.instance().write()
 
         summary_lines = [
             f"Importiert: {len(imported_layers)} Layer",
