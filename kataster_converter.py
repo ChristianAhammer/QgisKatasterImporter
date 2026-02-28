@@ -59,6 +59,20 @@ class KatasterConverterPlugin:
             return "Point"
         return None
 
+    @staticmethod
+    def _default_unsaved_output_path(source_folder):
+        folder_norm = os.path.normpath(source_folder)
+        folder_name = re.split(r"[\\/]+", folder_norm.rstrip("\\/"))[-1] or "kataster_output"
+
+        # Keep compatibility with old BEV workflow: 01_BEV_Rohdaten/<name> -> 03_QField_Output/kataster_<name>_qfield.gpkg
+        match = re.search(r"^(.*?)[\\/]01_bev_rohdaten(?:[\\/].*)?$", folder_norm, flags=re.IGNORECASE)
+        if match:
+            output_root = os.path.join(match.group(1), "03_QField_Output")
+        else:
+            output_root = folder_norm
+
+        return os.path.join(output_root, f"kataster_{folder_name}_qfield.gpkg")
+
     def run_kataster_converter(self):
         folder = QFileDialog.getExistingDirectory(None, "Wähle Ordner mit Katasterdaten", self.last_folder)
         if not folder:
@@ -71,8 +85,13 @@ class KatasterConverterPlugin:
         if project_is_saved:
             target_gpkg = os.path.splitext(project_path)[0] + ".gpkg"
         else:
-            folder_name = os.path.basename(os.path.normpath(folder)) or "kataster_output"
-            default_gpkg = os.path.join(folder, f"{folder_name}.gpkg")
+            default_gpkg = self._default_unsaved_output_path(folder)
+            default_gpkg_dir = os.path.dirname(default_gpkg)
+            try:
+                os.makedirs(default_gpkg_dir, exist_ok=True)
+            except OSError:
+                pass
+
             target_gpkg, _ = QFileDialog.getSaveFileName(
                 None,
                 "Ziel-GPKG wählen",

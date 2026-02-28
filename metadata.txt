@@ -2,7 +2,7 @@
 name = Kataster Converter
 qgisMinimumVersion = 3.10
 description = Konvertiert Kataster SHP-Dateien von EPSG:31255 nach EPSG:4258 mit GISGRID.
-version = 1.0.3
+version = 1.0.4
 author = Christian Ahammer
 email = christian.ahammer@example.com
 
