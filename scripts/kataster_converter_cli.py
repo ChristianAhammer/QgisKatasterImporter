@@ -31,6 +31,10 @@ from qgis.core import (
 )
 
 ORTHOFOTO_LAYER_NAME = 'BEV Orthofoto (basemap.at)'
+COLOR_GREEN = '\033[32m'
+COLOR_YELLOW = '\033[33m'
+COLOR_RED = '\033[31m'
+COLOR_RESET = '\033[0m'
 
 
 def is_kataster_shapefile(filename):
@@ -105,14 +109,28 @@ def build_orthofoto_layer():
     return ortho
 
 
+def move_layer_to_bottom(project, layer_id):
+    root = project.layerTreeRoot()
+    node = root.findLayer(layer_id)
+    if not node:
+        return
+
+    parent = node.parent() or root
+    clone = node.clone()
+    parent.removeChildNode(node)
+    parent.addChildNode(clone)
+
+
 def ensure_orthofoto_layer(project):
     for layer in project.mapLayers().values():
         if isinstance(layer, QgsRasterLayer) and layer.name() == ORTHOFOTO_LAYER_NAME:
+            move_layer_to_bottom(project, layer.id())
             return
 
     ortho = build_orthofoto_layer()
     if ortho and ortho.isValid():
         project.addMapLayer(ortho)
+        move_layer_to_bottom(project, ortho.id())
 
 
 def write_output_project(gpkg_path, layer_names, target_crs):
@@ -134,6 +152,8 @@ def write_output_project(gpkg_path, layer_names, target_crs):
             layer.setRenderer(QgsSingleSymbolRenderer(symbol))
 
         output_project.addMapLayer(layer)
+
+    ensure_orthofoto_layer(output_project)
 
     if not output_project.write():
         return None, 'QGIS-Projektdatei konnte nicht geschrieben werden'
@@ -344,9 +364,22 @@ def convert(source_folder, target_gpkg):
 
 
 def print_summary(result):
-    print(f"Importiert: {len(result['imported_layers'])} Layer")
-    print(f"Uebersprungen: {len(result['skipped_layers'])}")
-    print(f"Fehlgeschlagen: {len(result['failed_layers'])}")
+    color_enabled = sys.stdout.isatty() and os.environ.get('NO_COLOR') is None
+
+    def colorize(text, color):
+        if not color_enabled:
+            return text
+        return f'{color}{text}{COLOR_RESET}'
+
+    imported_count = len(result['imported_layers'])
+    skipped_count = len(result['skipped_layers'])
+    failed_count = len(result['failed_layers'])
+
+    print(colorize(f'Importiert: {imported_count} Layer', COLOR_GREEN))
+    skipped_line = f'Uebersprungen: {skipped_count}'
+    print(colorize(skipped_line, COLOR_YELLOW if skipped_count else COLOR_GREEN))
+    failed_line = f'Fehlgeschlagen: {failed_count}'
+    print(colorize(failed_line, COLOR_RED if failed_count else COLOR_GREEN))
     print('')
     print(f"Ziel-GPKG: {result['target_gpkg']}")
     if result['output_qgz']:
@@ -358,15 +391,15 @@ def print_summary(result):
 
     if result['skipped_layers']:
         print('')
-        print('Uebersprungene Dateien:')
+        print(colorize('Uebersprungene Dateien:', COLOR_YELLOW))
         for item in result['skipped_layers'][:10]:
-            print(item)
+            print(colorize(item, COLOR_YELLOW))
 
     if result['failed_layers']:
         print('')
-        print('Fehler:')
+        print(colorize('Fehler:', COLOR_RED))
         for item in result['failed_layers'][:10]:
-            print(item)
+            print(colorize(item, COLOR_RED))
 
 
 def parse_args(argv):
@@ -404,5 +437,9 @@ if __name__ == '__main__':
     try:
         sys.exit(main(sys.argv[1:]))
     except Exception as err:
-        print(f'Fatal: {err}', file=sys.stderr)
+        color_enabled = sys.stderr.isatty() and os.environ.get('NO_COLOR') is None
+        if color_enabled:
+            print(f'{COLOR_RED}Fatal: {err}{COLOR_RESET}', file=sys.stderr)
+        else:
+            print(f'Fatal: {err}', file=sys.stderr)
         sys.exit(2)

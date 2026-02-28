@@ -120,14 +120,28 @@ class KatasterConverterPlugin:
         return ortho
 
     @staticmethod
+    def _move_layer_to_bottom(project, layer_id):
+        root = project.layerTreeRoot()
+        node = root.findLayer(layer_id)
+        if not node:
+            return
+
+        parent = node.parent() or root
+        clone = node.clone()
+        parent.removeChildNode(node)
+        parent.addChildNode(clone)
+
+    @staticmethod
     def _ensure_orthofoto_layer(project):
         for layer in project.mapLayers().values():
             if isinstance(layer, QgsRasterLayer) and layer.name() == KatasterConverterPlugin.ORTHOFOTO_LAYER_NAME:
+                KatasterConverterPlugin._move_layer_to_bottom(project, layer.id())
                 return
 
         ortho = KatasterConverterPlugin._build_orthofoto_layer()
         if ortho and ortho.isValid():
             project.addMapLayer(ortho)
+            KatasterConverterPlugin._move_layer_to_bottom(project, ortho.id())
 
     @staticmethod
     def _write_output_project(gpkg_path, layer_names, target_crs):
@@ -149,6 +163,8 @@ class KatasterConverterPlugin:
                 layer.setRenderer(QgsSingleSymbolRenderer(symbol))
 
             output_project.addMapLayer(layer)
+
+        KatasterConverterPlugin._ensure_orthofoto_layer(output_project)
 
         if not output_project.write():
             return None, "QGIS-Projektdatei konnte nicht geschrieben werden"
