@@ -3,10 +3,16 @@
 # transformiert sie nach EPSG:25833 und speichert sie in das GPKG des aktuellen Projekts.
 
 import datetime
+import glob
+import math
 import os
 import re
 import shutil
 import sqlite3
+try:
+    import processing
+except ModuleNotFoundError:
+    processing = None
 
 from qgis.PyQt.QtGui import QIcon
 from qgis.PyQt.QtWidgets import QAction, QFileDialog, QMessageBox
@@ -14,12 +20,10 @@ from qgis.core import (
     QgsCoordinateReferenceSystem,
     QgsCoordinateTransform,
     QgsCoordinateTransformContext,
-    QgsFeature,
     QgsProject,
     QgsRasterLayer,
     QgsSingleSymbolRenderer,
     QgsSymbol,
-    QgsVectorDataProvider,
     QgsVectorFileWriter,
     QgsVectorLayer,
     QgsWkbTypes,
@@ -97,6 +101,115 @@ class KatasterConverterPlugin:
             output_root = folder_norm
 
         return os.path.join(output_root, f"kataster_{folder_name}_qfield.gpkg")
+
+    @staticmethod
+    def _dedupe_paths(values):
+        unique = []
+        seen = set()
+        for raw in values:
+            if not raw:
+                continue
+            norm = os.path.normpath(raw)
+            key = norm.lower()
+            if key in seen:
+                continue
+            seen.add(key)
+            unique.append(norm)
+        return unique
+
+    @staticmethod
+    def _qgis_base_from_source(source_folder):
+        match = re.search(r"^(.*?)[\\/]01_bev_rohdaten(?:[\\/].*)?$", os.path.normpath(source_folder), flags=re.IGNORECASE)
+        if not match:
+            return None
+        return os.path.normpath(match.group(1))
+
+    @staticmethod
+    def _qgis_base_from_target(target_gpkg):
+        match = re.search(r"^(.*?)[\\/]03_qfield_output(?:[\\/].*)?$", os.path.normpath(target_gpkg), flags=re.IGNORECASE)
+        if not match:
+            return None
+        return os.path.normpath(match.group(1))
+
+    @staticmethod
+    def _detail_value(obj, attr, default=None):
+        if not hasattr(obj, attr):
+            return default
+        value = getattr(obj, attr)
+        try:
+            return value() if callable(value) else value
+        except Exception:
+            return default
+
+    @staticmethod
+    def _select_gisgrid_operation(crs_source, crs_target):
+        transform = QgsCoordinateTransform(crs_source, crs_target, QgsCoordinateTransformContext())
+        if not hasattr(transform, "instantiatedCoordinateOperationDetails"):
+            return None, None, None, [], "QGIS API liefert keine OperationDetails für die Transformationsprüfung."
+
+        details = transform.instantiatedCoordinateOperationDetails()
+        operation = KatasterConverterPlugin._detail_value(details, "proj", "") or ""
+        operation_name = KatasterConverterPlugin._detail_value(details, "name", "") or ""
+        operation_accuracy = KatasterConverterPlugin._detail_value(details, "accuracy", None)
+        is_available = bool(KatasterConverterPlugin._detail_value(details, "isAvailable", False))
+        grids = KatasterConverterPlugin._detail_value(details, "grids", []) or []
+
+        available_grids = []
+        for grid in grids:
+            grid_available = bool(KatasterConverterPlugin._detail_value(grid, "isAvailable", True))
+            grid_path = (
+                KatasterConverterPlugin._detail_value(grid, "fullName", "")
+                or KatasterConverterPlugin._detail_value(grid, "shortName", "")
+            )
+            if grid_available and grid_path:
+                available_grids.append(grid_path)
+
+        if not is_available:
+            return None, None, None, available_grids, "QGIS meldet die bevorzugte GIS-Grid Transformation als nicht verfügbar."
+        if "hgridshift" not in operation.lower():
+            return None, None, None, available_grids, "Die aktive Transformation nutzt kein hgridshift/GIS-Grid."
+        if not available_grids:
+            return None, None, None, available_grids, "Kein verfügbares GIS-Grid in der aktiven Transformation gefunden."
+
+        return operation, operation_name, operation_accuracy, available_grids, None
+
+    @staticmethod
+    def _find_ntv2_grid(source_folder, target_gpkg, project_path):
+        direct_candidates = []
+        for env_key in ("QGIS_GISGRID_GSB", "GISGRID_GSB", "NTV2_GRID_PATH"):
+            direct_candidates.append(os.environ.get(env_key))
+
+        for candidate in KatasterConverterPlugin._dedupe_paths(direct_candidates):
+            if os.path.isfile(candidate) and candidate.lower().endswith(".gsb"):
+                return candidate, [candidate]
+
+        search_dirs = []
+        processing_root = os.environ.get("QFC_PROCESSING_ROOT")
+        if processing_root:
+            search_dirs.append(os.path.join(processing_root, "grids"))
+
+        qgis_base_from_source = KatasterConverterPlugin._qgis_base_from_source(source_folder)
+        if qgis_base_from_source:
+            search_dirs.append(os.path.join(qgis_base_from_source, "02_QGIS_Processing", "grids"))
+
+        qgis_base_from_target = KatasterConverterPlugin._qgis_base_from_target(target_gpkg)
+        if qgis_base_from_target:
+            search_dirs.append(os.path.join(qgis_base_from_target, "02_QGIS_Processing", "grids"))
+
+        if project_path:
+            project_dir = os.path.dirname(project_path)
+            project_base = os.path.normpath(os.path.join(project_dir, ".."))
+            search_dirs.append(os.path.join(project_base, "02_QGIS_Processing", "grids"))
+
+        searched = KatasterConverterPlugin._dedupe_paths(search_dirs)
+        for search_dir in searched:
+            if not os.path.isdir(search_dir):
+                continue
+            matches = sorted(glob.glob(os.path.join(search_dir, "**", "*.gsb"), recursive=True))
+            if matches:
+                return os.path.normpath(matches[0]), searched
+
+        return None, searched
 
     @staticmethod
     def _build_orthofoto_layer():
@@ -193,13 +306,14 @@ class KatasterConverterPlugin:
             return [], f"GPKG-Layerliste konnte nicht gelesen werden: {err}"
 
     @staticmethod
-    def _write_report(report_path, source_folder, target_gpkg, output_qgz, imported_layers, skipped_layers, failed_layers):
+    def _write_report(report_path, source_folder, target_gpkg, output_qgz, ntv2_grid, imported_layers, skipped_layers, failed_layers):
         timestamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         lines = [
             f"Kataster-Konverter Report: {timestamp}",
             f"Quelle: {source_folder}",
             f"Ziel-GPKG: {target_gpkg}",
             f"Ziel-QGZ: {output_qgz or 'nicht erstellt'}",
+            f"GIS-Grid: {ntv2_grid or 'nicht gefunden'}",
             "",
             f"Importiert ({len(imported_layers)}):",
         ]
@@ -246,6 +360,15 @@ class KatasterConverterPlugin:
             return [], str(err)
 
     def run_kataster_converter(self):
+        if processing is None:
+            QMessageBox.critical(
+                None,
+                "Processing fehlt",
+                "QGIS Processing-Modul konnte nicht geladen werden. "
+                "Bitte Processing-Plugin aktivieren und erneut starten.",
+            )
+            return
+
         folder = QFileDialog.getExistingDirectory(None, "Wähle Ordner mit Katasterdaten", self.last_folder)
         if not folder:
             return
@@ -284,8 +407,30 @@ class KatasterConverterPlugin:
 
         crs_source = QgsCoordinateReferenceSystem("EPSG:31255")
         crs_target = QgsCoordinateReferenceSystem("EPSG:25833")
-        transform_context: QgsCoordinateTransformContext = QgsProject.instance().transformContext()
-        coordinate_transform = QgsCoordinateTransform(crs_source, crs_target, transform_context)
+        ntv2_grid, searched_grid_dirs = self._find_ntv2_grid(folder, target_gpkg, project_path)
+        if not ntv2_grid:
+            searched_info = "\n".join(f"- {path}" for path in searched_grid_dirs) if searched_grid_dirs else "- keine Suchpfade ableitbar"
+            QMessageBox.critical(
+                None,
+                "GIS-Grid fehlt",
+                "Kein GIS_Grid (*.gsb) gefunden.\n"
+                "Die Transformation wird aus Genauigkeitsgründen abgebrochen.\n\n"
+                "Gesucht in:\n"
+                f"{searched_info}",
+            )
+            return
+
+        operation, operation_name, operation_accuracy, operation_grids, operation_error = self._select_gisgrid_operation(
+            crs_source, crs_target
+        )
+        if operation_error:
+            QMessageBox.critical(
+                None,
+                "Transformationsfehler",
+                f"{operation_error}\nAusgewählte lokale GIS-Grid Datei: {ntv2_grid}",
+            )
+            return
+        transform_context = QgsCoordinateTransformContext()
 
         imported_layers = []
         skipped_layers = []
@@ -318,32 +463,25 @@ class KatasterConverterPlugin:
                 skipped_layers.append(f"{filename}: nicht unterstützter Geometrietyp")
                 continue
 
-            reprojected = QgsVectorLayer(f"{geometry}?crs=EPSG:25833", layer_name, "memory")
-            reprojected_data: QgsVectorDataProvider = reprojected.dataProvider()
-            reprojected_data.addAttributes(layer.fields())
-            reprojected.updateFields()
-
-            feature_error = None
-            for feat in layer.getFeatures():
-                new_feat = QgsFeature()
-                new_feat.setFields(reprojected.fields())
-                new_feat.setAttributes(feat.attributes())
-                geom = feat.geometry()
-
-                transform_status = geom.transform(coordinate_transform)
-                if transform_status != 0:
-                    feature_error = f"Geometrie-Transform fehlgeschlagen (Code {transform_status})"
-                    break
-                new_feat.setGeometry(geom)
-                if not reprojected_data.addFeature(new_feat):
-                    feature_error = "Feature konnte nicht in den Reprojektions-Layer geschrieben werden"
-                    break
-
-            if feature_error:
-                failed_layers.append(f"{filename}: {feature_error}")
+            try:
+                reprojected = processing.run(
+                    "native:reprojectlayer",
+                    {
+                        "INPUT": layer,
+                        "TARGET_CRS": crs_target,
+                        "OPERATION": operation,
+                        "OUTPUT": "TEMPORARY_OUTPUT",
+                    },
+                )["OUTPUT"]
+            except Exception as err:
+                failed_layers.append(f"{filename}: Reprojektion fehlgeschlagen ({err})")
                 continue
 
-            reprojected.updateExtents()
+            extent = reprojected.extent()
+            extent_values = [extent.xMinimum(), extent.yMinimum(), extent.xMaximum(), extent.yMaximum()]
+            if not all(math.isfinite(value) for value in extent_values):
+                failed_layers.append(f"{filename}: Reprojektion lieferte ungültige Ausdehnung {extent_values}")
+                continue
 
             options = QgsVectorFileWriter.SaveVectorOptions()
             options.driverName = "GPKG"
@@ -353,7 +491,6 @@ class KatasterConverterPlugin:
                 options.actionOnExistingFile = QgsVectorFileWriter.CreateOrOverwriteLayer
             else:
                 options.actionOnExistingFile = QgsVectorFileWriter.CreateOrOverwriteFile
-            options.destinationCrs = crs_target
 
             err, msg = QgsVectorFileWriter.writeAsVectorFormatV2(
                 reprojected,
@@ -421,6 +558,7 @@ class KatasterConverterPlugin:
             folder,
             target_gpkg,
             output_qgz,
+            ntv2_grid,
             imported_layers,
             skipped_layers,
             failed_layers,
@@ -439,7 +577,14 @@ class KatasterConverterPlugin:
             f"Fehlgeschlagen: {len(failed_layers)}",
             "",
             f"Ziel-GPKG: {target_gpkg}",
+            f"GIS-Grid: {ntv2_grid}",
         ]
+        if operation_name:
+            summary_lines.append(f"Transform: {operation_name}")
+        if operation_grids:
+            summary_lines.append(f"Aktives Grid: {operation_grids[0]}")
+        if operation_accuracy is not None:
+            summary_lines.append(f"Transform-Genauigkeit: {operation_accuracy} m")
 
         if output_qgz:
             summary_lines.append(f"Ziel-QGZ: {output_qgz}")

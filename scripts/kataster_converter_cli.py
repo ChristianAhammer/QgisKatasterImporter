@@ -7,24 +7,60 @@ Run via QGIS Python environment (e.g. python-qgis-ltr.bat):
 
 import argparse
 import datetime
+import glob
 import json
+import math
 import os
 import re
 import shutil
 import sqlite3
 import sys
 
+
+def _bootstrap_processing_paths():
+    candidates = []
+
+    qgis_prefix = os.environ.get('QGIS_PREFIX_PATH')
+    if qgis_prefix:
+        candidates.append(qgis_prefix)
+
+    osgeo4w_root = os.environ.get('OSGEO4W_ROOT', r'C:\OSGeo4W')
+    candidates.append(os.path.join(osgeo4w_root, 'apps', 'qgis'))
+    candidates.append(os.path.join(osgeo4w_root, 'apps', 'qgis-ltr'))
+
+    seen = set()
+    for prefix in candidates:
+        if not prefix:
+            continue
+        norm_prefix = os.path.normpath(prefix)
+        key = norm_prefix.lower()
+        if key in seen:
+            continue
+        seen.add(key)
+        for sub in (os.path.join(norm_prefix, 'python'), os.path.join(norm_prefix, 'python', 'plugins')):
+            if os.path.isdir(sub) and sub not in sys.path:
+                sys.path.append(sub)
+
+
+_bootstrap_processing_paths()
+try:
+    import processing
+    from processing.core.Processing import Processing
+    PROCESSING_IMPORT_ERROR = None
+except ModuleNotFoundError as err:
+    processing = None
+    Processing = None
+    PROCESSING_IMPORT_ERROR = err
+
 from qgis.core import (
     QgsApplication,
     QgsCoordinateReferenceSystem,
     QgsCoordinateTransform,
     QgsCoordinateTransformContext,
-    QgsFeature,
     QgsProject,
     QgsRasterLayer,
     QgsSingleSymbolRenderer,
     QgsSymbol,
-    QgsVectorDataProvider,
     QgsVectorFileWriter,
     QgsVectorLayer,
     QgsWkbTypes,
@@ -35,6 +71,107 @@ COLOR_GREEN = '\033[32m'
 COLOR_YELLOW = '\033[33m'
 COLOR_RED = '\033[31m'
 COLOR_RESET = '\033[0m'
+
+
+def _dedupe_paths(values):
+    unique = []
+    seen = set()
+    for raw in values:
+        if not raw:
+            continue
+        norm = os.path.normpath(raw)
+        key = norm.lower()
+        if key in seen:
+            continue
+        seen.add(key)
+        unique.append(norm)
+    return unique
+
+
+def _qgis_base_from_source(source_folder):
+    match = re.search(r'^(.*?)[\\/]01_bev_rohdaten(?:[\\/].*)?$', os.path.normpath(source_folder), flags=re.IGNORECASE)
+    if not match:
+        return None
+    return os.path.normpath(match.group(1))
+
+
+def _qgis_base_from_target(target_gpkg):
+    match = re.search(r'^(.*?)[\\/]03_qfield_output(?:[\\/].*)?$', os.path.normpath(target_gpkg), flags=re.IGNORECASE)
+    if not match:
+        return None
+    return os.path.normpath(match.group(1))
+
+
+def _detail_value(obj, attr, default=None):
+    if not hasattr(obj, attr):
+        return default
+    value = getattr(obj, attr)
+    try:
+        return value() if callable(value) else value
+    except Exception:
+        return default
+
+
+def select_gisgrid_operation(crs_source, crs_target):
+    transform = QgsCoordinateTransform(crs_source, crs_target, QgsCoordinateTransformContext())
+    if not hasattr(transform, 'instantiatedCoordinateOperationDetails'):
+        return None, None, None, [], 'QGIS API liefert keine OperationDetails fuer die Transformationspruefung.'
+
+    details = transform.instantiatedCoordinateOperationDetails()
+    operation = _detail_value(details, 'proj', '') or ''
+    operation_name = _detail_value(details, 'name', '') or ''
+    operation_accuracy = _detail_value(details, 'accuracy', None)
+    is_available = bool(_detail_value(details, 'isAvailable', False))
+    grids = _detail_value(details, 'grids', []) or []
+
+    available_grids = []
+    for grid in grids:
+        grid_available = bool(_detail_value(grid, 'isAvailable', True))
+        grid_path = _detail_value(grid, 'fullName', '') or _detail_value(grid, 'shortName', '')
+        if grid_available and grid_path:
+            available_grids.append(grid_path)
+
+    if not is_available:
+        return None, None, None, available_grids, 'QGIS meldet die bevorzugte GIS-Grid Transformation als nicht verfuegbar.'
+    if 'hgridshift' not in operation.lower():
+        return None, None, None, available_grids, 'Die aktive Transformation nutzt kein hgridshift/GIS-Grid.'
+    if not available_grids:
+        return None, None, None, available_grids, 'Kein verfuegbares GIS-Grid in der aktiven Transformation gefunden.'
+
+    return operation, operation_name, operation_accuracy, available_grids, None
+
+
+def find_ntv2_grid(source_folder, target_gpkg, explicit_grid=None):
+    direct_candidates = [explicit_grid]
+    for env_key in ('QGIS_GISGRID_GSB', 'GISGRID_GSB', 'NTV2_GRID_PATH'):
+        direct_candidates.append(os.environ.get(env_key))
+
+    for candidate in _dedupe_paths(direct_candidates):
+        if os.path.isfile(candidate) and candidate.lower().endswith('.gsb'):
+            return candidate, [candidate]
+
+    search_dirs = []
+    processing_root = os.environ.get('QFC_PROCESSING_ROOT')
+    if processing_root:
+        search_dirs.append(os.path.join(processing_root, 'grids'))
+
+    qgis_base_from_source = _qgis_base_from_source(source_folder)
+    if qgis_base_from_source:
+        search_dirs.append(os.path.join(qgis_base_from_source, '02_QGIS_Processing', 'grids'))
+
+    qgis_base_from_target = _qgis_base_from_target(target_gpkg)
+    if qgis_base_from_target:
+        search_dirs.append(os.path.join(qgis_base_from_target, '02_QGIS_Processing', 'grids'))
+
+    searched = _dedupe_paths(search_dirs)
+    for search_dir in searched:
+        if not os.path.isdir(search_dir):
+            continue
+        matches = sorted(glob.glob(os.path.join(search_dir, '**', '*.gsb'), recursive=True))
+        if matches:
+            return os.path.normpath(matches[0]), searched
+
+    return None, searched
 
 
 def is_kataster_shapefile(filename):
@@ -161,13 +298,14 @@ def write_output_project(gpkg_path, layer_names, target_crs):
     return output_qgz, None
 
 
-def write_report(report_path, source_folder, target_gpkg, output_qgz, imported_layers, skipped_layers, failed_layers):
+def write_report(report_path, source_folder, target_gpkg, output_qgz, ntv2_grid, imported_layers, skipped_layers, failed_layers):
     timestamp = datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
     lines = [
         f'Kataster-Konverter Report: {timestamp}',
         f'Quelle: {source_folder}',
         f'Ziel-GPKG: {target_gpkg}',
         f'Ziel-QGZ: {output_qgz or "nicht erstellt"}',
+        f'GIS-Grid: {ntv2_grid or "nicht gefunden"}',
         '',
         f'Importiert ({len(imported_layers)}):',
     ]
@@ -217,7 +355,7 @@ def _path_action(existed_before, path, kind):
     return {'action': action, 'kind': kind, 'path': os.path.normpath(path)}
 
 
-def convert(source_folder, target_gpkg):
+def convert(source_folder, target_gpkg, ntv2_grid_path=None):
     if not os.path.isdir(source_folder):
         raise RuntimeError(f'Quellordner nicht gefunden: {source_folder}')
 
@@ -234,8 +372,22 @@ def convert(source_folder, target_gpkg):
 
     crs_source = QgsCoordinateReferenceSystem('EPSG:31255')
     crs_target = QgsCoordinateReferenceSystem('EPSG:25833')
+    ntv2_grid, searched_grid_dirs = find_ntv2_grid(source_folder, target_gpkg, ntv2_grid_path)
+    if not ntv2_grid:
+        searched_info = ', '.join(searched_grid_dirs) if searched_grid_dirs else 'keine Suchpfade ableitbar'
+        raise RuntimeError(
+            'GIS-Grid (*.gsb) nicht gefunden. Transformation wird aus Genauigkeitsgruenden abgebrochen. '
+            f'Gesucht in: {searched_info}'
+        )
+
+    operation, operation_name, operation_accuracy, operation_grids, operation_error = select_gisgrid_operation(
+        crs_source, crs_target
+    )
+    if operation_error:
+        raise RuntimeError(
+            f'{operation_error} Ausgewaehlte lokale GIS-Grid Datei: {ntv2_grid}'
+        )
     transform_context = QgsCoordinateTransformContext()
-    coordinate_transform = QgsCoordinateTransform(crs_source, crs_target, transform_context)
 
     imported_layers = []
     skipped_layers = []
@@ -272,31 +424,25 @@ def convert(source_folder, target_gpkg):
             skipped_layers.append(f'{filename}: nicht unterstuetzter Geometrietyp')
             continue
 
-        reprojected = QgsVectorLayer(f'{geometry}?crs=EPSG:25833', layer_name, 'memory')
-        reprojected_data: QgsVectorDataProvider = reprojected.dataProvider()
-        reprojected_data.addAttributes(layer.fields())
-        reprojected.updateFields()
-
-        feature_error = None
-        for feat in layer.getFeatures():
-            new_feat = QgsFeature()
-            new_feat.setFields(reprojected.fields())
-            new_feat.setAttributes(feat.attributes())
-            geom = feat.geometry()
-            transform_status = geom.transform(coordinate_transform)
-            if transform_status != 0:
-                feature_error = f'Geometrie-Transform fehlgeschlagen (Code {transform_status})'
-                break
-            new_feat.setGeometry(geom)
-            if not reprojected_data.addFeature(new_feat):
-                feature_error = 'Feature konnte nicht in den Reprojektions-Layer geschrieben werden'
-                break
-
-        if feature_error:
-            failed_layers.append(f'{filename}: {feature_error}')
+        try:
+            reprojected = processing.run(
+                'native:reprojectlayer',
+                {
+                    'INPUT': layer,
+                    'TARGET_CRS': crs_target,
+                    'OPERATION': operation,
+                    'OUTPUT': 'TEMPORARY_OUTPUT',
+                },
+            )['OUTPUT']
+        except Exception as err:
+            failed_layers.append(f'{filename}: Reprojektion fehlgeschlagen ({err})')
             continue
 
-        reprojected.updateExtents()
+        extent = reprojected.extent()
+        extent_values = [extent.xMinimum(), extent.yMinimum(), extent.xMaximum(), extent.yMaximum()]
+        if not all(math.isfinite(value) for value in extent_values):
+            failed_layers.append(f'{filename}: Reprojektion lieferte ungueltige Ausdehnung {extent_values}')
+            continue
 
         options = QgsVectorFileWriter.SaveVectorOptions()
         options.driverName = 'GPKG'
@@ -306,7 +452,6 @@ def convert(source_folder, target_gpkg):
             options.actionOnExistingFile = QgsVectorFileWriter.CreateOrOverwriteLayer
         else:
             options.actionOnExistingFile = QgsVectorFileWriter.CreateOrOverwriteFile
-        options.destinationCrs = crs_target
 
         err, msg = QgsVectorFileWriter.writeAsVectorFormatV2(
             reprojected,
@@ -357,6 +502,7 @@ def convert(source_folder, target_gpkg):
             source_folder,
             target_gpkg,
             output_qgz,
+            ntv2_grid,
             imported_layers,
             skipped_layers,
             failed_layers,
@@ -396,6 +542,10 @@ def convert(source_folder, target_gpkg):
         'target_gpkg': target_gpkg,
         'output_qgz': output_qgz,
         'report_path': report_path,
+        'ntv2_grid': ntv2_grid,
+        'operation_name': operation_name,
+        'operation_accuracy': operation_accuracy,
+        'operation_grid': operation_grids[0] if operation_grids else None,
         'imported_layers': imported_layers,
         'skipped_layers': skipped_layers,
         'failed_layers': failed_layers,
@@ -423,6 +573,14 @@ def print_summary(result):
     print(colorize(failed_line, COLOR_RED if failed_count else COLOR_GREEN))
     print('')
     print(f"Ziel-GPKG: {result['target_gpkg']}")
+    if result.get('ntv2_grid'):
+        print(f"GIS-Grid: {result['ntv2_grid']}")
+    if result.get('operation_name'):
+        print(f"Transform: {result['operation_name']}")
+    if result.get('operation_grid'):
+        print(f"Aktives Grid: {result['operation_grid']}")
+    if result.get('operation_accuracy') is not None:
+        print(f"Transform-Genauigkeit: {result['operation_accuracy']} m")
     if result['output_qgz']:
         print(f"Ziel-QGZ: {result['output_qgz']}")
     if result['report_path']:
@@ -463,6 +621,7 @@ def parse_args(argv):
     parser = argparse.ArgumentParser(description='Headless Kataster converter (PyQGIS).')
     parser.add_argument('--source', required=True, help='Path to source folder with shapefiles')
     parser.add_argument('--target', help='Path to target GPKG file (.gpkg)')
+    parser.add_argument('--ntv2-grid', help='Optional explicit path to GIS_Grid .gsb file')
     parser.add_argument('--summary-json', help='Optional output file for machine-readable summary json')
     parser.add_argument('--summary-target-file', help='Optional output file containing target_gpkg path')
     return parser.parse_args(argv)
@@ -476,8 +635,14 @@ def main(argv):
 
     qgs = QgsApplication([], False)
     qgs.initQgis()
+    if processing is None or Processing is None:
+        raise RuntimeError(
+            f'QGIS Processing-Modul konnte nicht geladen werden: {PROCESSING_IMPORT_ERROR}. '
+            'Bitte Processing-Plugin Installation prüfen.'
+        )
+    Processing.initialize()
     try:
-        result = convert(source_folder, target_gpkg)
+        result = convert(source_folder, target_gpkg, ntv2_grid_path=args.ntv2_grid)
         print_summary(result)
         if args.summary_json:
             with open(args.summary_json, 'w', encoding='utf-8') as handle:
