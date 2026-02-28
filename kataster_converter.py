@@ -66,11 +66,23 @@ class KatasterConverterPlugin:
         self.last_folder = folder
 
         project_path = QgsProject.instance().fileName()
-        if not project_path:
-            QMessageBox.critical(None, "Fehler", "Projekt muss gespeichert sein, um Ziel-GPKG zu bestimmen.")
-            return
+        project_is_saved = bool(project_path)
 
-        target_gpkg = os.path.splitext(project_path)[0] + ".gpkg"
+        if project_is_saved:
+            target_gpkg = os.path.splitext(project_path)[0] + ".gpkg"
+        else:
+            default_gpkg = os.path.join(folder, "kataster_output.gpkg")
+            target_gpkg, _ = QFileDialog.getSaveFileName(
+                None,
+                "Ziel-GPKG wählen",
+                default_gpkg,
+                "GeoPackage (*.gpkg)",
+            )
+            if not target_gpkg:
+                return
+            if not target_gpkg.lower().endswith(".gpkg"):
+                target_gpkg += ".gpkg"
+
         gpkg_folder = os.path.dirname(target_gpkg)
         if not os.access(gpkg_folder, os.W_OK):
             QMessageBox.critical(None, "Zugriffsfehler", f"Kein Schreibzugriff auf Verzeichnis: {gpkg_folder}")
@@ -173,7 +185,8 @@ class KatasterConverterPlugin:
         except OSError as err:
             failed_layers.append(f"Zeitstempel konnte nicht aktualisiert werden: {err}")
 
-        QgsProject.instance().write()
+        if project_is_saved:
+            QgsProject.instance().write()
 
         summary_lines = [
             f"Importiert: {len(imported_layers)} Layer",
