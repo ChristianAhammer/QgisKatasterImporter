@@ -16,6 +16,7 @@ from qgis.core import (
     QgsCoordinateTransformContext,
     QgsFeature,
     QgsProject,
+    QgsRasterLayer,
     QgsSingleSymbolRenderer,
     QgsSymbol,
     QgsVectorDataProvider,
@@ -26,6 +27,8 @@ from qgis.core import (
 
 
 class KatasterConverterPlugin:
+    ORTHOFOTO_LAYER_NAME = "BEV Orthofoto (basemap.at)"
+
     def __init__(self, iface):
         self.iface = iface
         self.action = None
@@ -96,11 +99,43 @@ class KatasterConverterPlugin:
         return os.path.join(output_root, f"kataster_{folder_name}_qfield.gpkg")
 
     @staticmethod
+    def _build_orthofoto_layer():
+        wmts_params = {
+            "contextualWMSLegend": "0",
+            "crs": "EPSG:3857",
+            "dpiMode": "7",
+            "format": "image/jpeg",
+            "layers": "bmaporthofoto30cm",
+            "styles": "normal",
+            "tileMatrixSet": "google3857",
+            "url": "https://www.basemap.at/wmts/1.0.0/WMTSCapabilities.xml",
+        }
+        wmts_uri = "&".join(f"{key}={value}" for key, value in wmts_params.items())
+
+        ortho = QgsRasterLayer(wmts_uri, KatasterConverterPlugin.ORTHOFOTO_LAYER_NAME, "wms")
+        if not ortho.isValid():
+            return None
+
+        ortho.setOpacity(1.0)
+        return ortho
+
+    @staticmethod
+    def _ensure_orthofoto_layer(project):
+        for layer in project.mapLayers().values():
+            if isinstance(layer, QgsRasterLayer) and layer.name() == KatasterConverterPlugin.ORTHOFOTO_LAYER_NAME:
+                return
+
+        ortho = KatasterConverterPlugin._build_orthofoto_layer()
+        if ortho and ortho.isValid():
+            project.addMapLayer(ortho)
+
+    @staticmethod
     def _write_output_project(gpkg_path, layer_names, target_crs):
         output_qgz = os.path.splitext(gpkg_path)[0] + ".qgz"
         output_project = QgsProject()
         output_project.setFileName(output_qgz)
         output_project.setCrs(target_crs)
+        KatasterConverterPlugin._ensure_orthofoto_layer(output_project)
 
         for layer_name in layer_names:
             layer = QgsVectorLayer(f"{gpkg_path}|layername={layer_name}", layer_name, "ogr")
@@ -242,6 +277,7 @@ class KatasterConverterPlugin:
 
         # Avoid old converted layers masking the current GST/SGG output.
         self._remove_existing_kataster_layers_from_project()
+        self._ensure_orthofoto_layer(QgsProject.instance())
         gpkg_exists = os.path.exists(target_gpkg)
 
         for filename in sorted(os.listdir(folder)):
