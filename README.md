@@ -34,6 +34,22 @@ call %OSGEO4W_ROOT%\bin\o4w_env.bat
 python bev_to_qfield.py
 ```
 
+### Option 3: Automated CLI Workflow (Windows)
+
+For fully automated conversion + local sync folder update + QFieldCloud sync:
+
+```batch
+run_kataster_converter.bat
+```
+
+Workflow details:
+
+- Prompts for a 5-digit KatastralGemeinde number (KG-Nr.).
+- Shows detected KG names if a mapping file is available.
+- Converts to `03_QField_Output/kataster_<KG-Nr>_qfield/`.
+- Updates local sync folder in `04_QField_Sync/`.
+- Uploads/syncs with QFieldCloud via `scripts/qfieldcloud_sync.py`.
+
 ## 📋 Features
 
 ✅ **Batch Processing** - Convert multiple vector layers at once
@@ -79,11 +95,16 @@ Output: ETRS89/UTM33N (EPSG:25833) ready for QField
 ```
 C:\Users\<YourUser>\Meine Ablage\QGIS\
 ├── 01_BEV_Rawdata/            ← Input BEV data
+│   └── KG_Verzeichnis.zip      ← Optional KG number→name mapping (BEV)
 ├── 02_QGIS_Processing/
 │   └── grids/                 ← Optional NTv2 (.gsb) & geoid (.tif)
 ├── 03_QField_Output/          ← Generated output
 └── 04_QField_Sync/            ← QField sync folder
 ```
+
+Optional env override in `qfieldcloud.env`:
+
+- `QFC_KG_MAPPING_FILE=<absolute path to CSV or ZIP>`
 
 ## 🔧 Installation Methods
 
@@ -110,13 +131,30 @@ cd QgisKatasterImporter/bev_to_qfield_plugin
 
 ### Unit Tests (No QGIS required)
 ```bash
-python3 -m unittest -v test_kataster_common.py test_bump_plugin_version.py
+python3 -m unittest -v \
+  test_kataster_common.py \
+  test_bump_plugin_version.py \
+  test_kg_mapping_lookup.py \
+  test_qgis_mcp_blackbox_check.py
 ```
 
 ### Integration Test (QGIS with OSGeo4W)
 ```batch
 run_qgis_test.bat
 ```
+
+### MCP Black-Box Check (QGIS MCP server)
+```batch
+run_mcp_blackbox_test.bat "C:\Users\<YourUser>\Meine Ablage\QGIS\03_QField_Output\kataster_44106_qfield.qgz"
+```
+
+### MCP Integration Test (auto-start QGIS + MCP)
+```batch
+run_mcp_integration_test.bat "C:\Users\<YourUser>\Meine Ablage\QGIS\03_QField_Output\kataster_44106_qfield\kataster_44106_qfield.qgz"
+```
+
+By default the wrapper closes the QGIS instance it started after the test run.
+Set `QFC_MCP_KEEP_QGIS=1` to keep it open.
 
 See [TESTING.md](TESTING.md) for full test matrix and prerequisites.
 
@@ -198,6 +236,12 @@ GPLv2+ - Same as QGIS
 - GitHub: [@ChristianAhammer](https://github.com/ChristianAhammer)
 
 ## 🔄 Version History
+
+### v2.1 (Mar 2026)
+- Added MCP black-box project check script + Windows wrapper
+- Added KG number→name lookup integration in `run_kataster_converter.bat`
+- Added local KG mapping resolver (`scripts/kg_mapping_lookup.py`)
+- Added unit tests for KG resolver and MCP client primitives
 
 ### v1.0.0 (Feb 2026)
 - ✨ Initial release

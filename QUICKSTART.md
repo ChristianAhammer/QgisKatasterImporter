@@ -52,7 +52,27 @@ QGIS/
 ### Add Your Data
 
 1. Place BEV shapefiles/GeoPackages/GeoJSON in `01_BEV_Rawdata/`
-2. *(Optional)* Add NTv2 grid files to `02_QGIS_Processing/grids/`
+2. *(Optional, recommended)* Place BEV `KG_Verzeichnis.zip` in `01_BEV_Rawdata/`
+   - Enables KG number -> KG name display in CLI workflow
+3. *(Optional)* Add NTv2 grid files to `02_QGIS_Processing/grids/`
+
+## CLI Automation (Windows)
+
+Use this mode when conversion + sync should run end-to-end from one script.
+
+1. Ensure `qfieldcloud.env` exists in `02_QGIS_Processing/` and contains:
+   - `QFC_OUTPUT_ROOT`
+   - `QFC_SYNC_ROOT`
+   - `QFIELDCLOUD_USERNAME` and/or `QFIELDCLOUD_TOKEN`
+2. Run:
+
+```batch
+run_kataster_converter.bat
+```
+
+3. Enter a 5-digit KatastralGemeinde number (KG-Nr.), for example `51235`
+4. Verify output in `03_QField_Output/kataster_<KG-Nr>_qfield/`
+5. Verify sync copy in `04_QField_Sync/kataster_<KG-Nr>_qfield/`
 
 ## What You Get
 

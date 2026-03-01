@@ -11,7 +11,10 @@ Convert BEV cadastral raw data (5-digit KatastralGemeinde number) into QField-re
 1. Check repo state: `git status --short`
 2. Review workflow entrypoint: `run_kataster_converter.bat`
 3. Review tests/docs: `TESTING.md`
-4. For MCP black-box check: `run_mcp_blackbox_test.bat` and `scripts/qgis_mcp_blackbox_check.py`
+4. For MCP integration tests:
+   - Preferred (auto-start): `run_mcp_integration_test.bat`
+   - Manual mode: `run_mcp_blackbox_test.bat` and `scripts/qgis_mcp_blackbox_check.py`
+   - Set `QFC_MCP_KEEP_QGIS=1` only when QGIS should stay open after auto-start test runs.
 
 ## Environment Facts
 
