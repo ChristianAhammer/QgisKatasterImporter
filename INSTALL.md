@@ -76,7 +76,7 @@ ModuleNotFoundError: No module named 'bev_to_qfield'
 1. **Create directory structure**:
    ```
    C:\Users\<YourUsername>\Meine Ablage\QGIS\
-   ├── 01_BEV_Rohdaten/           ← Add your files here
+   ├── 01_BEV_Rawdata/            ← Add your files here
    ├── 02_QGIS_Processing/
    │   └── grids/
    ├── 03_QField_Output/
@@ -84,7 +84,7 @@ ModuleNotFoundError: No module named 'bev_to_qfield'
    ```
 
 2. **Add your data**:
-   - Place Shapefiles (.shp), GeoPackages (.gpkg), or GeoJSON files in `01_BEV_Rohdaten/`
+   - Place Shapefiles (.shp), GeoPackages (.gpkg), or GeoJSON files in `01_BEV_Rawdata/`
    - Ensure file extensions are correct
 
 3. **Verify file formats**:
@@ -144,7 +144,7 @@ After installing, verify the plugin works:
    - No errors in QGIS Message Log
 
 4. **Test with sample data** (optional):
-   - Create `01_BEV_Rohdaten/` folder
+   - Create `01_BEV_Rawdata/` folder
    - Add a test Shapefile
    - Run conversion to verify
 

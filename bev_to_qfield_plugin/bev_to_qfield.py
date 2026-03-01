@@ -66,7 +66,6 @@ class BEVToQFieldConfig:
         self.dir_proc = self.base / "02_QGIS_Processing"
         self.dir_grids = self.dir_proc / "grids"
         self.dir_out = self.base / "03_QField_Output"
-        self.dir_arch = self.dir_out / "archive"
         
         local_temp_root = Path(os.environ.get("LOCALAPPDATA", r"C:\Temp")) / "QGIS_Work"
         local_temp_root.mkdir(parents=True, exist_ok=True)
@@ -74,7 +73,7 @@ class BEVToQFieldConfig:
     
     def ensure_dirs(self):
         """Ensure all required directories exist."""
-        for d in (self.dir_grids, self.dir_out, self.dir_arch, self.run_temp_dir):
+        for d in (self.dir_grids, self.dir_out, self.run_temp_dir):
             d.mkdir(parents=True, exist_ok=True)
 
 
@@ -323,13 +322,9 @@ class BEVToQField:
         self.log(f"📂 Eingabeordner: {dir_raw}")
         
         basename = os.path.basename(dir_raw.rstrip("/\\"))
-        stamp = datetime.datetime.now().strftime("%Y%m%d_%H%M")
-        
         out_gpkg = self.config.dir_out / f"kataster_{basename}_qfield.gpkg"
         out_qgz = self.config.dir_out / f"kataster_{basename}_qfield.qgz"
         out_rpt = self.config.dir_out / f"kataster_{basename}_qfield_report.txt"
-        arch_gpkg = self.config.dir_arch / f"kataster_{basename}_qfield_{stamp}.gpkg"
-        arch_qgz = self.config.dir_arch / f"kataster_{basename}_qfield_{stamp}.qgz"
         tmp_gpkg = self.config.run_temp_dir / TEMP_GPKG_NAME
         
         # Collect input layers
@@ -395,13 +390,6 @@ class BEVToQField:
         
         # Write report
         self._write_report(ntv2_path, geoid_tif, str(out_rpt))
-        
-        # Archive outputs
-        try:
-            shutil.copy2(str(out_gpkg), str(arch_gpkg))
-            shutil.copy2(str(out_qgz), str(arch_qgz))
-        except Exception as e:
-            self.log(f"⚠️ Archivieren fehlgeschlagen: {e}")
         
         self.log(f"Fertig: {out_gpkg}")
         self.log(f"Projekt: {out_qgz}")

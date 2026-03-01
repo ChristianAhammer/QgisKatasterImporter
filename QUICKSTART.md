@@ -42,7 +42,7 @@ Create this folder at: `C:\Users\<YourUsername>\Meine Ablage (ca19770610@gmail.c
 
 ```
 QGIS/
-├── 01_BEV_Rohdaten/        ← Place your input files here
+├── 01_BEV_Rawdata/         ← Place your input files here
 ├── 02_QGIS_Processing/
 │   └── grids/              ← Optional NTv2 (.gsb) & geoid (.tif)
 ├── 03_QField_Output/       ← (created automatically)
@@ -51,7 +51,7 @@ QGIS/
 
 ### Add Your Data
 
-1. Place BEV shapefiles/GeoPackages/GeoJSON in `01_BEV_Rohdaten/`
+1. Place BEV shapefiles/GeoPackages/GeoJSON in `01_BEV_Rawdata/`
 2. *(Optional)* Add NTv2 grid files to `02_QGIS_Processing/grids/`
 
 ## What You Get
@@ -72,7 +72,7 @@ After conversion, in `03_QField_Output/`:
 - Check QGIS → View → Panels → Message Log for errors
 
 ### "No input data found"
-- Put files in `01_BEV_Rohdaten/` folder
+- Put files in `01_BEV_Rawdata/` folder
 - Supported formats: `.shp`, `.gpkg`, `.geojson`
 - Make sure file extensions are correct
 

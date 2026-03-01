@@ -7,12 +7,19 @@ import glob
 import math
 import os
 import re
-import shutil
 import sqlite3
 try:
     import processing
 except ModuleNotFoundError:
     processing = None
+
+from kataster_common import (
+    dedupe_paths,
+    default_output_path,
+    is_kataster_shapefile,
+    qgis_base_from_source,
+    qgis_base_from_target,
+)
 
 from qgis.PyQt.QtGui import QIcon
 from qgis.PyQt.QtWidgets import QAction, QFileDialog, QMessageBox
@@ -52,14 +59,7 @@ class KatasterConverterPlugin:
 
     @staticmethod
     def _is_kataster_shapefile(filename):
-        lower = filename.lower()
-        if not lower.endswith(".shp"):
-            return False
-
-        base = os.path.splitext(lower)[0]
-        # Match GST/SGG only when not embedded in a larger word,
-        # while still allowing cadastral names like 44106GST_V2.
-        return re.search(r"(?<![a-z])(gst|sgg)(?![a-z])", base) is not None
+        return is_kataster_shapefile(filename)
 
     @staticmethod
     def _memory_geometry_for(layer):
@@ -90,46 +90,19 @@ class KatasterConverterPlugin:
 
     @staticmethod
     def _default_unsaved_output_path(source_folder):
-        folder_norm = os.path.normpath(source_folder)
-        folder_name = re.split(r"[\\/]+", folder_norm.rstrip("\\/"))[-1] or "kataster_output"
-
-        # Keep compatibility with old BEV workflow: 01_BEV_Rohdaten/<name> -> 03_QField_Output/kataster_<name>_qfield.gpkg
-        match = re.search(r"^(.*?)[\\/]01_bev_rohdaten(?:[\\/].*)?$", folder_norm, flags=re.IGNORECASE)
-        if match:
-            output_root = os.path.join(match.group(1), "03_QField_Output")
-        else:
-            output_root = folder_norm
-
-        return os.path.join(output_root, f"kataster_{folder_name}_qfield.gpkg")
+        return default_output_path(source_folder)
 
     @staticmethod
     def _dedupe_paths(values):
-        unique = []
-        seen = set()
-        for raw in values:
-            if not raw:
-                continue
-            norm = os.path.normpath(raw)
-            key = norm.lower()
-            if key in seen:
-                continue
-            seen.add(key)
-            unique.append(norm)
-        return unique
+        return dedupe_paths(values)
 
     @staticmethod
     def _qgis_base_from_source(source_folder):
-        match = re.search(r"^(.*?)[\\/]01_bev_rohdaten(?:[\\/].*)?$", os.path.normpath(source_folder), flags=re.IGNORECASE)
-        if not match:
-            return None
-        return os.path.normpath(match.group(1))
+        return qgis_base_from_source(source_folder)
 
     @staticmethod
     def _qgis_base_from_target(target_gpkg):
-        match = re.search(r"^(.*?)[\\/]03_qfield_output(?:[\\/].*)?$", os.path.normpath(target_gpkg), flags=re.IGNORECASE)
-        if not match:
-            return None
-        return os.path.normpath(match.group(1))
+        return qgis_base_from_target(target_gpkg)
 
     @staticmethod
     def _detail_value(obj, attr, default=None):
@@ -333,31 +306,6 @@ class KatasterConverterPlugin:
             return None
         except OSError as err:
             return str(err)
-
-    @staticmethod
-    def _archive_outputs(target_gpkg, output_qgz, report_path):
-        output_dir = os.path.dirname(target_gpkg)
-        if os.path.basename(output_dir).lower() != "03_qfield_output":
-            return [], None
-
-        archive_dir = os.path.join(output_dir, "archive")
-        try:
-            os.makedirs(archive_dir, exist_ok=True)
-            stamp = datetime.datetime.now().strftime("%Y%m%d_%H%M")
-            base = os.path.splitext(os.path.basename(target_gpkg))[0]
-
-            archived = []
-            for src in [target_gpkg, output_qgz, report_path]:
-                if not src or not os.path.exists(src):
-                    continue
-                ext = os.path.splitext(src)[1]
-                dst = os.path.join(archive_dir, f"{base}_{stamp}{ext}")
-                shutil.copy2(src, dst)
-                archived.append(dst)
-
-            return archived, None
-        except OSError as err:
-            return [], str(err)
 
     def run_kataster_converter(self):
         if processing is None:
@@ -567,10 +515,6 @@ class KatasterConverterPlugin:
             failed_layers.append(f"Reportdatei: {report_error}")
             report_path = None
 
-        archived_files, archive_error = self._archive_outputs(target_gpkg, output_qgz, report_path)
-        if archive_error:
-            failed_layers.append(f"Archivierung: {archive_error}")
-
         summary_lines = [
             f"Importiert: {len(imported_layers)} Layer",
             f"Übersprungen: {len(skipped_layers)}",
@@ -590,9 +534,6 @@ class KatasterConverterPlugin:
             summary_lines.append(f"Ziel-QGZ: {output_qgz}")
         if report_path:
             summary_lines.append(f"Report: {report_path}")
-        if archived_files:
-            summary_lines.append(f"Archiv: {os.path.dirname(archived_files[0])} ({len(archived_files)} Datei(en))")
-
         if skipped_layers:
             summary_lines.append("")
             summary_lines.append("Übersprungene Dateien:")

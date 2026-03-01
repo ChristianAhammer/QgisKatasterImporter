@@ -56,6 +56,7 @@ if defined QFC_CONFIG_FILE if exist "!QFC_CONFIG_FILE!" (
     if /I "%%A"=="QFIELDCLOUD_URL" if "!QFIELDCLOUD_URL!"=="" set "QFIELDCLOUD_URL=%%B"
     if /I "%%A"=="QFIELDCLOUD_TOKEN" if "!QFIELDCLOUD_TOKEN!"=="" set "QFIELDCLOUD_TOKEN=%%B"
     if /I "%%A"=="QFIELDCLOUD_USERNAME" if "!QFIELDCLOUD_USERNAME!"=="" set "QFIELDCLOUD_USERNAME=%%B"
+    if /I "%%A"=="QFC_RAWDATA_ROOT" if "!QFC_RAWDATA_ROOT!"=="" set "QFC_RAWDATA_ROOT=%%B"
     if /I "%%A"=="QFC_ROHDATEN_ROOT" if "!QFC_ROHDATEN_ROOT!"=="" set "QFC_ROHDATEN_ROOT=%%B"
     if /I "%%A"=="QFC_PROCESSING_ROOT" if "!QFC_PROCESSING_ROOT!"=="" set "QFC_PROCESSING_ROOT=%%B"
     if /I "%%A"=="QFC_OUTPUT_ROOT" if "!QFC_OUTPUT_ROOT!"=="" set "QFC_OUTPUT_ROOT=%%B"
@@ -68,18 +69,45 @@ echo Kataster Converter (headless)
 echo.
 set "SOURCE="
 set "SOURCE_BROWSE_ROOT="
-if defined QFC_ROHDATEN_ROOT if exist "!QFC_ROHDATEN_ROOT!\" set "SOURCE_BROWSE_ROOT=!QFC_ROHDATEN_ROOT!"
-if not defined SOURCE_BROWSE_ROOT if defined QFC_CONFIG_FILE (
-  set "SOURCE_BROWSE_ROOT=!QFC_CONFIG_FILE:\02_QGIS_Processing\qfieldcloud.env=\01_BEV_Rohdaten\entzippt!"
-  if not exist "!SOURCE_BROWSE_ROOT!\" set "SOURCE_BROWSE_ROOT="
+set "RAWDATA_ROOT="
+if defined QFC_RAWDATA_ROOT if exist "!QFC_RAWDATA_ROOT!\" (
+  set "RAWDATA_ROOT=!QFC_RAWDATA_ROOT!"
 )
-if not defined SOURCE_BROWSE_ROOT (
-  for /d %%D in ("%USERPROFILE%\Meine Ablage*\QGIS\01_BEV_Rohdaten\entzippt") do (
-    if not defined SOURCE_BROWSE_ROOT if exist "%%~fD" set "SOURCE_BROWSE_ROOT=%%~fD"
+if not defined RAWDATA_ROOT if defined QFC_ROHDATEN_ROOT if exist "!QFC_ROHDATEN_ROOT!\" (
+  set "RAWDATA_ROOT=!QFC_ROHDATEN_ROOT!"
+  for %%I in ("!RAWDATA_ROOT!") do set "RAWDATA_LEAF=%%~nxI"
+  if /I "!RAWDATA_LEAF!"=="entzippt" (
+    for %%I in ("!RAWDATA_ROOT!\..") do set "RAWDATA_ROOT=%%~fI"
   )
 )
-if not defined SOURCE_BROWSE_ROOT if exist "%USERPROFILE%\QGIS\01_BEV_Rohdaten\entzippt\" (
-  set "SOURCE_BROWSE_ROOT=%USERPROFILE%\QGIS\01_BEV_Rohdaten\entzippt"
+if not defined RAWDATA_ROOT if defined QFC_CONFIG_FILE (
+  set "RAWDATA_ROOT=!QFC_CONFIG_FILE:\02_QGIS_Processing\qfieldcloud.env=\01_BEV_Rawdata!"
+  if not exist "!RAWDATA_ROOT!\" set "RAWDATA_ROOT="
+  if not defined RAWDATA_ROOT (
+    set "RAWDATA_ROOT=!QFC_CONFIG_FILE:\02_QGIS_Processing\qfieldcloud.env=\01_BEV_Rohdaten!"
+    if not exist "!RAWDATA_ROOT!\" set "RAWDATA_ROOT="
+  )
+)
+if not defined RAWDATA_ROOT (
+  for /d %%D in ("%USERPROFILE%\Meine Ablage*\QGIS\01_BEV_Rawdata") do (
+    if not defined RAWDATA_ROOT if exist "%%~fD" set "RAWDATA_ROOT=%%~fD"
+  )
+)
+if not defined RAWDATA_ROOT (
+  for /d %%D in ("%USERPROFILE%\Meine Ablage*\QGIS\01_BEV_Rohdaten") do (
+    if not defined RAWDATA_ROOT if exist "%%~fD" set "RAWDATA_ROOT=%%~fD"
+  )
+)
+if not defined RAWDATA_ROOT if exist "%USERPROFILE%\QGIS\01_BEV_Rawdata\" (
+  set "RAWDATA_ROOT=%USERPROFILE%\QGIS\01_BEV_Rawdata"
+)
+if not defined RAWDATA_ROOT if exist "%USERPROFILE%\QGIS\01_BEV_Rohdaten\" (
+  set "RAWDATA_ROOT=%USERPROFILE%\QGIS\01_BEV_Rohdaten"
+)
+if defined RAWDATA_ROOT (
+  set "SOURCE_BROWSE_ROOT=!RAWDATA_ROOT!"
+  call :ensure_rawdata_ready "!RAWDATA_ROOT!"
+  if not exist "!SOURCE_BROWSE_ROOT!\" set "SOURCE_BROWSE_ROOT="
 )
 if defined SOURCE_BROWSE_ROOT set "QFC_BROWSE_HINT=!SOURCE_BROWSE_ROOT!"
 if defined SOURCE_BROWSE_ROOT (
@@ -88,28 +116,38 @@ if defined SOURCE_BROWSE_ROOT (
   echo Available source subfolders:
   set /a SRC_COUNT=0
   for /f "delims=" %%D in ('dir /b /ad "!SOURCE_BROWSE_ROOT!" 2^>nul') do (
-    set /a SRC_COUNT+=1
-    set "SRC_!SRC_COUNT!=!SOURCE_BROWSE_ROOT!\%%D"
-    echo   [!SRC_COUNT!] %%D
-  )
-  if !SRC_COUNT! GTR 0 (
-    echo.
-    set "USE_DIALOG=0"
-    set /p SRC_CHOICE=Choose number ^(D = folder dialog, ENTER = manual path^): 
-    if defined SRC_CHOICE (
-      for /f "tokens=* delims= " %%Z in ("!SRC_CHOICE!") do set "SRC_CHOICE=%%Z"
-      set "SRC_CHOICE=!SRC_CHOICE: =!"
+    if /I not "%%D"=="entzippt" (
+      set /a SRC_COUNT+=1
+      set "SRC_NAME_!SRC_COUNT!=%%D"
+      set "SRC_PATH_!SRC_COUNT!=!SOURCE_BROWSE_ROOT!\%%D"
+      echo   - %%D
     )
-    if defined SRC_CHOICE (
-      if /I "!SRC_CHOICE!"=="D" (
-        set "USE_DIALOG=1"
-      ) else (
-        call set "SOURCE=%%SRC_!SRC_CHOICE!%%"
+  )
+  echo.
+  if !SRC_COUNT! LEQ 0 echo No extracted source subfolders found yet in Rawdata.
+  set "USE_DIALOG=0"
+  set /p SRC_CHOICE=Choose folder name ^(D = folder dialog, ENTER = manual path^): 
+  if defined SRC_CHOICE (
+    for /f "tokens=* delims= " %%Z in ("!SRC_CHOICE!") do set "SRC_CHOICE=%%Z"
+  )
+  if defined SRC_CHOICE (
+    if /I "!SRC_CHOICE!"=="D" (
+      set "USE_DIALOG=1"
+    ) else (
+      set "SOURCE="
+      for /L %%I in (1,1,!SRC_COUNT!) do (
+        call set "SRC_NAME=%%SRC_NAME_%%I%%"
+        call set "SRC_PATH=%%SRC_PATH_%%I%%"
+        if /I "!SRC_CHOICE!"=="!SRC_NAME!" set "SOURCE=!SRC_PATH!"
+      )
+      if not defined SOURCE if defined RAWDATA_ROOT (
+        call :ensure_source_folder_unzipped "!RAWDATA_ROOT!" "!SOURCE_BROWSE_ROOT!" "!SRC_CHOICE!"
+        if exist "!SOURCE_BROWSE_ROOT!\!SRC_CHOICE!\" set "SOURCE=!SOURCE_BROWSE_ROOT!\!SRC_CHOICE!"
       )
     )
-    if not defined SOURCE if defined SRC_CHOICE if /I not "!SRC_CHOICE!"=="D" (
-      echo Invalid selection: !SRC_CHOICE!
-    )
+  )
+  if not defined SOURCE if defined SRC_CHOICE if /I not "!SRC_CHOICE!"=="D" (
+    echo Folder not available: !SRC_CHOICE!
   )
 )
 
@@ -124,7 +162,7 @@ if "!SOURCE!"=="" if "!USE_DIALOG!"=="1" if exist "%POWERSHELL_EXE%" (
 
 if "!SOURCE!"=="" (
   if "!USE_DIALOG!"=="1" echo No folder selected in dialog.
-  set /p SOURCE=Source folder path ^(e.g. C:\...\01_BEV_Rohdaten\entzippt\44106^): 
+  set /p SOURCE=Source folder path ^(e.g. C:\...\01_BEV_Rawdata\51234^): 
 )
 
 if "!SOURCE!"=="" (
@@ -145,7 +183,8 @@ if not exist "!QFC_OUTPUT_ROOT!\" (
   exit /b 2
 )
 for %%I in ("!SOURCE!") do set "SRC_FOLDER=%%~nxI"
-set "TARGET=!QFC_OUTPUT_ROOT!\kataster_!SRC_FOLDER!_qfield.gpkg"
+set "TARGET_PROJECT=kataster_!SRC_FOLDER!_qfield"
+set "TARGET=!QFC_OUTPUT_ROOT!\!TARGET_PROJECT!\!TARGET_PROJECT!.gpkg"
 echo Using output root from env: !TARGET!
 
 echo.
@@ -175,8 +214,16 @@ if defined TARGET_GPKG (
   for %%I in ("!TARGET_GPKG!") do set "PROJECT_STEM=%%~nI"
   for %%I in ("!TARGET_GPKG!") do set "TARGET_QGZ=%%~dpnI.qgz"
 )
-if defined PROJECT_DIR (
+if defined QFC_OUTPUT_ROOT (
+  for %%I in ("!QFC_OUTPUT_ROOT!\..") do set "QGIS_BASE=%%~fI"
+)
+if not defined QGIS_BASE if defined PROJECT_DIR (
   for %%I in ("!PROJECT_DIR!..") do set "QGIS_BASE=%%~fI"
+  if not exist "!QGIS_BASE!\04_QField_Sync\" (
+    for %%I in ("!PROJECT_DIR!\..\..") do set "QGIS_BASE=%%~fI"
+  )
+)
+if defined PROJECT_DIR (
   if defined QFC_SYNC_ROOT if exist "!QFC_SYNC_ROOT!\" set "SYNC_ROOT=!QFC_SYNC_ROOT!"
   if not defined SYNC_ROOT if exist "!QGIS_BASE!\04_QField_Sync\" set "SYNC_ROOT=!QGIS_BASE!\04_QField_Sync"
   if defined QFC_PROCESSING_ROOT if exist "!QFC_PROCESSING_ROOT!\" set "QFC_CONFIG_FILE=!QFC_PROCESSING_ROOT!\qfieldcloud.env"
@@ -192,6 +239,7 @@ if defined SYNC_ROOT if defined PROJECT_STEM (
     >> "!QFC_CONFIG_FILE!" echo QFIELDCLOUD_URL=https://app.qfield.cloud/api/v1/
     if defined QFIELDCLOUD_USERNAME >> "!QFC_CONFIG_FILE!" echo QFIELDCLOUD_USERNAME=!QFIELDCLOUD_USERNAME!
     if defined QFIELDCLOUD_TOKEN >> "!QFC_CONFIG_FILE!" echo QFIELDCLOUD_TOKEN=!QFIELDCLOUD_TOKEN!
+    if defined QFC_RAWDATA_ROOT >> "!QFC_CONFIG_FILE!" echo QFC_RAWDATA_ROOT=!QFC_RAWDATA_ROOT!
     if defined QFC_ROHDATEN_ROOT >> "!QFC_CONFIG_FILE!" echo QFC_ROHDATEN_ROOT=!QFC_ROHDATEN_ROOT!
     if defined QFC_PROCESSING_ROOT >> "!QFC_CONFIG_FILE!" echo QFC_PROCESSING_ROOT=!QFC_PROCESSING_ROOT!
     if defined QFC_OUTPUT_ROOT >> "!QFC_CONFIG_FILE!" echo QFC_OUTPUT_ROOT=!QFC_OUTPUT_ROOT!
@@ -248,6 +296,7 @@ if defined QFC_CONFIG_FILE if exist "!QFC_CONFIG_FILE!" (
     if /I "%%A"=="QFIELDCLOUD_URL" if "!QFIELDCLOUD_URL!"=="https://app.qfield.cloud/api/v1/" set "QFIELDCLOUD_URL=%%B"
     if /I "%%A"=="QFIELDCLOUD_TOKEN" if "!QFIELDCLOUD_TOKEN!"=="" set "QFIELDCLOUD_TOKEN=%%B"
     if /I "%%A"=="QFIELDCLOUD_USERNAME" if "!QFIELDCLOUD_USERNAME!"=="" set "QFIELDCLOUD_USERNAME=%%B"
+    if /I "%%A"=="QFC_RAWDATA_ROOT" if "!QFC_RAWDATA_ROOT!"=="" set "QFC_RAWDATA_ROOT=%%B"
     if /I "%%A"=="QFC_ROHDATEN_ROOT" if "!QFC_ROHDATEN_ROOT!"=="" set "QFC_ROHDATEN_ROOT=%%B"
     if /I "%%A"=="QFC_PROCESSING_ROOT" if "!QFC_PROCESSING_ROOT!"=="" set "QFC_PROCESSING_ROOT=%%B"
     if /I "%%A"=="QFC_OUTPUT_ROOT" if "!QFC_OUTPUT_ROOT!"=="" set "QFC_OUTPUT_ROOT=%%B"
@@ -344,3 +393,54 @@ echo %CLOUD_SUMMARY%
 echo.
 pause
 exit /b %EXITCODE%
+
+:ensure_rawdata_ready
+set "UNZIP_RAWDATA=%~1"
+if not defined UNZIP_RAWDATA goto :eof
+if not exist "!UNZIP_RAWDATA!\" mkdir "!UNZIP_RAWDATA!" >nul 2>nul
+if not exist "!UNZIP_RAWDATA!\" goto :eof
+goto :eof
+
+:ensure_source_folder_unzipped
+set "UNZIP_RAWDATA=%~1"
+set "UNZIP_TARGET_ROOT=%~2"
+set "UNZIP_FOLDER=%~3"
+if not defined UNZIP_RAWDATA goto :eof
+if not defined UNZIP_TARGET_ROOT goto :eof
+if not defined UNZIP_FOLDER goto :eof
+if not exist "!UNZIP_RAWDATA!\" goto :eof
+if exist "!UNZIP_TARGET_ROOT!\!UNZIP_FOLDER!\" goto :eof
+
+if not exist "!UNZIP_TARGET_ROOT!\" mkdir "!UNZIP_TARGET_ROOT!" >nul 2>nul
+
+set /a ZIP_COUNT=0
+for /f "delims=" %%Z in ('dir /b /a-d "!UNZIP_RAWDATA!\*.zip" 2^>nul') do set /a ZIP_COUNT+=1
+if !ZIP_COUNT! LEQ 0 (
+  echo No ZIP archives found in "!UNZIP_RAWDATA!".
+  goto :eof
+)
+
+if not exist "%POWERSHELL_EXE%" (
+  echo WARNING: PowerShell is unavailable; cannot extract "!UNZIP_FOLDER!" from ZIP.
+  goto :eof
+)
+
+echo Folder "!UNZIP_FOLDER!" not yet extracted. Searching ZIP archive^(s^)...
+set "QFC_UNZIP_SRC=!UNZIP_RAWDATA!"
+set "QFC_UNZIP_DST=!UNZIP_TARGET_ROOT!"
+set "QFC_UNZIP_FOLDER=!UNZIP_FOLDER!"
+"%POWERSHELL_EXE%" -NoProfile -Command "Add-Type -AssemblyName System.IO.Compression.FileSystem; $src=$env:QFC_UNZIP_SRC; $dst=$env:QFC_UNZIP_DST; $wanted=$env:QFC_UNZIP_FOLDER; $found=$false; $zips=Get-ChildItem -LiteralPath $src -Filter *.zip -File -ErrorAction SilentlyContinue; foreach($zipFile in $zips){ $zip=[System.IO.Compression.ZipFile]::OpenRead($zipFile.FullName); try { foreach($entry in $zip.Entries){ $entryName=$entry.FullName.Replace('\','/'); if([string]::IsNullOrWhiteSpace($entryName)){ continue }; $parts=$entryName.Split('/', [System.StringSplitOptions]::RemoveEmptyEntries); $idx=-1; for($i=0; $i -lt $parts.Length; $i++){ if($parts[$i] -ieq $wanted){ $idx=$i; break } }; if($idx -lt 0){ continue }; $found=$true; $relParts=$parts[$idx..($parts.Length-1)]; $target=Join-Path $dst ($relParts -join '\'); if($entry.Name -eq ''){ [System.IO.Directory]::CreateDirectory($target) | Out-Null; continue }; $targetDir=Split-Path -Parent $target; if($targetDir){ [System.IO.Directory]::CreateDirectory($targetDir) | Out-Null }; [System.IO.Compression.ZipFileExtensions]::ExtractToFile($entry, $target, $true) } } finally { $zip.Dispose() } }; if(-not $found){ exit 3 }"
+if errorlevel 3 (
+  echo Folder "!UNZIP_FOLDER!" was not found in available ZIP archive^(s^).
+  goto :eof
+)
+if errorlevel 1 (
+  echo WARNING: ZIP extraction reported an error for "!UNZIP_FOLDER!".
+  goto :eof
+)
+if exist "!UNZIP_TARGET_ROOT!\!UNZIP_FOLDER!\" (
+  echo Extracted folder to "!UNZIP_TARGET_ROOT!\!UNZIP_FOLDER!".
+) else (
+  echo WARNING: Extraction completed but folder "!UNZIP_FOLDER!" is still missing.
+)
+goto :eof

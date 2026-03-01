@@ -78,11 +78,10 @@ Output: ETRS89/UTM33N (EPSG:25833) ready for QField
 
 ```
 C:\Users\<YourUser>\Meine Ablage\QGIS\
-├── 01_BEV_Rohdaten/           ← Input BEV data
+├── 01_BEV_Rawdata/            ← Input BEV data
 ├── 02_QGIS_Processing/
 │   └── grids/                 ← Optional NTv2 (.gsb) & geoid (.tif)
 ├── 03_QField_Output/          ← Generated output
-│   └── archive/               ← Timestamped backups
 └── 04_QField_Sync/            ← QField sync folder
 ```
 
@@ -109,13 +108,17 @@ cd QgisKatasterImporter/bev_to_qfield_plugin
 
 ## ✅ Testing
 
+### Unit Tests (No QGIS required)
+```bash
+python3 -m unittest -v test_kataster_common.py test_bump_plugin_version.py
+```
+
 ### Integration Test (QGIS with OSGeo4W)
 ```batch
-cd bev_to_qfield_plugin
 run_qgis_test.bat
 ```
 
-All tests should pass ✓
+See [TESTING.md](TESTING.md) for full test matrix and prerequisites.
 
 ## 🏗️ Architecture
 
@@ -146,6 +149,7 @@ converter.run()  # Interactive UI will prompt for input folder
 - **[Plugin Installation & Usage](bev_to_qfield_plugin/README.md)** - Full plugin guide
 - **[Architecture & Optimization](ARCHITECTURE.md)** - Technical details
 - **[Testing Guide](TESTING.md)** - Test suite documentation
+- **[Quality Criteria](QUALITY.md)** - Quality gates and release checklist
 
 ## 🔗 Coordinate Systems
 
@@ -200,7 +204,7 @@ GPLv2+ - Same as QGIS
 - 🏗️ Class-based refactored architecture
 - ✅ Full QGIS 3.44.0 integration
 - 🎨 QGIS plugin UI with real-time feedback
-- 📝 Comprehensive test suite
+- 📝 Unit + integration testing baseline
 - 📖 Complete documentation
 
 ## 🙏 Acknowledgments

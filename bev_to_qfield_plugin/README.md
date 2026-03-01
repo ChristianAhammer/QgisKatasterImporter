@@ -44,7 +44,7 @@ The plugin expects the following directory structure in your QGIS folder:
 
 ```
 C:\Users\<YourUsername>\Meine Ablage (ca19770610@gmail.com)\QGIS\
-├── 01_BEV_Rohdaten/               # ← Place your input BEV data here
+├── 01_BEV_Rawdata/                # ← Place your input BEV data here
 ├── 02_QGIS_Processing/
 │   └── grids/                     # ← Optional NTv2 (.gsb) and geoid grids (.tif)
 ├── 03_QField_Output/              # ← Generated output files
@@ -83,7 +83,6 @@ For more accurate coordinate transformation and orthometric heights:
    - `kataster_<FOLDERNAME>_qfield.gpkg` - GeoPackage with all layers
    - `kataster_<FOLDERNAME>_qfield.qgz` - Styled QGIS project
    - `kataster_<FOLDERNAME>_qfield_report.txt` - Processing report
-   - Archive copies in `03_QField_Output/archive/`
 
 ### From Command Line
 
@@ -158,7 +157,7 @@ python bev_to_qfield.py
 3. Verify QGIS version is 3.40+
 
 ### "No input data found"
-1. Ensure input folder exists: `01_BEV_Rohdaten/`
+1. Ensure input folder exists: `01_BEV_Rawdata/`
 2. Place valid shape files, GeoPackages, or GeoJSON files in it
 3. Check file extensions are correct (.shp, .gpkg, .geojson)
 
@@ -196,4 +195,4 @@ Christian Ahammer
 - Processing provider integration
 - Menu-based UI
 - Real-time progress feedback
-- Comprehensive testing suite
+- Unit + integration testing baseline

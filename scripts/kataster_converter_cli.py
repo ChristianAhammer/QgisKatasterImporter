@@ -11,10 +11,22 @@ import glob
 import json
 import math
 import os
-import re
-import shutil
 import sqlite3
 import sys
+
+SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+REPO_ROOT = os.path.dirname(SCRIPT_DIR)
+if REPO_ROOT not in sys.path:
+    sys.path.insert(0, REPO_ROOT)
+
+from kataster_common import (
+    dedupe_paths,
+    default_output_path,
+    is_kataster_shapefile,
+    path_action,
+    qgis_base_from_source,
+    qgis_base_from_target,
+)
 
 
 def _bootstrap_processing_paths():
@@ -73,35 +85,6 @@ COLOR_RED = '\033[31m'
 COLOR_RESET = '\033[0m'
 
 
-def _dedupe_paths(values):
-    unique = []
-    seen = set()
-    for raw in values:
-        if not raw:
-            continue
-        norm = os.path.normpath(raw)
-        key = norm.lower()
-        if key in seen:
-            continue
-        seen.add(key)
-        unique.append(norm)
-    return unique
-
-
-def _qgis_base_from_source(source_folder):
-    match = re.search(r'^(.*?)[\\/]01_bev_rohdaten(?:[\\/].*)?$', os.path.normpath(source_folder), flags=re.IGNORECASE)
-    if not match:
-        return None
-    return os.path.normpath(match.group(1))
-
-
-def _qgis_base_from_target(target_gpkg):
-    match = re.search(r'^(.*?)[\\/]03_qfield_output(?:[\\/].*)?$', os.path.normpath(target_gpkg), flags=re.IGNORECASE)
-    if not match:
-        return None
-    return os.path.normpath(match.group(1))
-
-
 def _detail_value(obj, attr, default=None):
     if not hasattr(obj, attr):
         return default
@@ -146,7 +129,7 @@ def find_ntv2_grid(source_folder, target_gpkg, explicit_grid=None):
     for env_key in ('QGIS_GISGRID_GSB', 'GISGRID_GSB', 'NTV2_GRID_PATH'):
         direct_candidates.append(os.environ.get(env_key))
 
-    for candidate in _dedupe_paths(direct_candidates):
+    for candidate in dedupe_paths(direct_candidates):
         if os.path.isfile(candidate) and candidate.lower().endswith('.gsb'):
             return candidate, [candidate]
 
@@ -155,15 +138,15 @@ def find_ntv2_grid(source_folder, target_gpkg, explicit_grid=None):
     if processing_root:
         search_dirs.append(os.path.join(processing_root, 'grids'))
 
-    qgis_base_from_source = _qgis_base_from_source(source_folder)
-    if qgis_base_from_source:
-        search_dirs.append(os.path.join(qgis_base_from_source, '02_QGIS_Processing', 'grids'))
+    source_base = qgis_base_from_source(source_folder)
+    if source_base:
+        search_dirs.append(os.path.join(source_base, '02_QGIS_Processing', 'grids'))
 
-    qgis_base_from_target = _qgis_base_from_target(target_gpkg)
-    if qgis_base_from_target:
-        search_dirs.append(os.path.join(qgis_base_from_target, '02_QGIS_Processing', 'grids'))
+    target_base = qgis_base_from_target(target_gpkg)
+    if target_base:
+        search_dirs.append(os.path.join(target_base, '02_QGIS_Processing', 'grids'))
 
-    searched = _dedupe_paths(search_dirs)
+    searched = dedupe_paths(search_dirs)
     for search_dir in searched:
         if not os.path.isdir(search_dir):
             continue
@@ -173,15 +156,6 @@ def find_ntv2_grid(source_folder, target_gpkg, explicit_grid=None):
 
     return None, searched
 
-
-def is_kataster_shapefile(filename):
-    lower = filename.lower()
-    if not lower.endswith('.shp'):
-        return False
-    base = os.path.splitext(lower)[0]
-    return re.search(r'(?<![a-z])(gst|sgg)(?![a-z])', base) is not None
-
-
 def memory_geometry_for(layer):
     geometry_type = QgsWkbTypes.geometryType(layer.wkbType())
     if geometry_type == QgsWkbTypes.PolygonGeometry:
@@ -189,20 +163,6 @@ def memory_geometry_for(layer):
     if geometry_type == QgsWkbTypes.PointGeometry:
         return 'Point'
     return None
-
-
-def default_output_path(source_folder):
-    folder_norm = os.path.normpath(source_folder)
-    folder_name = re.split(r'[\\/]+', folder_norm.rstrip('\\/'))[-1] or 'kataster_output'
-
-    match = re.search(r'^(.*?)[\\/]01_bev_rohdaten(?:[\\/].*)?$', folder_norm, flags=re.IGNORECASE)
-    if match:
-        output_root = os.path.join(match.group(1), '03_QField_Output')
-    else:
-        output_root = folder_norm
-
-    return os.path.join(output_root, f'kataster_{folder_name}_qfield.gpkg')
-
 
 def list_gpkg_layers(gpkg_path):
     if not os.path.exists(gpkg_path):
@@ -323,38 +283,6 @@ def write_report(report_path, source_folder, target_gpkg, output_qgz, ntv2_grid,
         handle.write('\n'.join(lines) + '\n')
 
 
-def archive_outputs(target_gpkg, output_qgz, report_path):
-    output_dir = os.path.dirname(target_gpkg)
-    if os.path.basename(output_dir).lower() != '03_qfield_output':
-        return [], None
-
-    archive_dir = os.path.join(output_dir, 'archive')
-    try:
-        os.makedirs(archive_dir, exist_ok=True)
-        stamp = datetime.datetime.now().strftime('%Y%m%d_%H%M')
-        base = os.path.splitext(os.path.basename(target_gpkg))[0]
-
-        archived = []
-        for src in [target_gpkg, output_qgz, report_path]:
-            if not src or not os.path.exists(src):
-                continue
-            ext = os.path.splitext(src)[1]
-            dst = os.path.join(archive_dir, f'{base}_{stamp}{ext}')
-            shutil.copy2(src, dst)
-            archived.append(dst)
-
-        return archived, None
-    except OSError as err:
-        return [], str(err)
-
-
-def _path_action(existed_before, path, kind):
-    if not path:
-        return None
-    action = 'Aktualisiert' if existed_before else 'Erstellt'
-    return {'action': action, 'kind': kind, 'path': os.path.normpath(path)}
-
-
 def convert(source_folder, target_gpkg, ntv2_grid_path=None):
     if not os.path.isdir(source_folder):
         raise RuntimeError(f'Quellordner nicht gefunden: {source_folder}')
@@ -400,9 +328,6 @@ def convert(source_folder, target_gpkg, ntv2_grid_path=None):
     output_qgz_existed_before = os.path.exists(output_qgz_path)
     report_path = os.path.splitext(target_gpkg)[0] + '_report.txt'
     report_existed_before = os.path.exists(report_path)
-    output_dir = os.path.dirname(target_gpkg)
-    archive_dir = os.path.join(output_dir, 'archive')
-    archive_dir_existed_before = os.path.isdir(archive_dir)
 
     for filename in sorted(os.listdir(source_folder)):
         if not is_kataster_shapefile(filename):
@@ -511,32 +436,22 @@ def convert(source_folder, target_gpkg, ntv2_grid_path=None):
         failed_layers.append(f'Reportdatei: {err}')
         report_path = None
 
-    archived_files, archive_error = archive_outputs(target_gpkg, output_qgz, report_path)
-    if archive_error:
-        failed_layers.append(f'Archivierung: {archive_error}')
-
     if not gpkg_folder_existed_before and os.path.isdir(gpkg_folder):
         path_actions.append({'action': 'Erstellt', 'kind': 'Ordner', 'path': os.path.normpath(gpkg_folder)})
 
-    gpkg_action = _path_action(target_gpkg_existed_before, target_gpkg, 'Datei')
+    gpkg_action = path_action(target_gpkg_existed_before, target_gpkg, 'Datei')
     if gpkg_action and os.path.exists(target_gpkg):
         path_actions.append(gpkg_action)
 
     if output_qgz and os.path.exists(output_qgz):
-        qgz_action = _path_action(output_qgz_existed_before, output_qgz, 'Datei')
+        qgz_action = path_action(output_qgz_existed_before, output_qgz, 'Datei')
         if qgz_action:
             path_actions.append(qgz_action)
 
     if report_path and os.path.exists(report_path):
-        report_action = _path_action(report_existed_before, report_path, 'Datei')
+        report_action = path_action(report_existed_before, report_path, 'Datei')
         if report_action:
             path_actions.append(report_action)
-
-    if archived_files:
-        if not archive_dir_existed_before and os.path.isdir(archive_dir):
-            path_actions.append({'action': 'Erstellt', 'kind': 'Ordner', 'path': os.path.normpath(archive_dir)})
-        for archived_path in archived_files:
-            path_actions.append({'action': 'Erstellt', 'kind': 'Datei', 'path': os.path.normpath(archived_path)})
 
     return {
         'target_gpkg': target_gpkg,
@@ -549,7 +464,6 @@ def convert(source_folder, target_gpkg, ntv2_grid_path=None):
         'imported_layers': imported_layers,
         'skipped_layers': skipped_layers,
         'failed_layers': failed_layers,
-        'archived_files': archived_files,
         'path_actions': path_actions,
     }
 
@@ -585,9 +499,6 @@ def print_summary(result):
         print(f"Ziel-QGZ: {result['output_qgz']}")
     if result['report_path']:
         print(f"Report: {result['report_path']}")
-    if result['archived_files']:
-        print(f"Archiv: {os.path.dirname(result['archived_files'][0])} ({len(result['archived_files'])} Datei(en))")
-
     path_actions = result.get('path_actions') or []
     if path_actions:
         print('')

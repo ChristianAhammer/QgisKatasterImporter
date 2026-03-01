@@ -3,7 +3,7 @@ name=BEV to QField Converter
 qgisMinimumVersion=3.40
 qgisMaximumVersion=3.99
 description=Convert Austrian BEV (MGI/GK) cadastral data to ETRS89/UTM33N for QField mobile fieldwork
-version=1.0.0
+version=2.0.0
 author=Christian Ahammer
 email=ca19770610@gmail.com
 url=https://github.com/ChristianAhammer/QgisKatasterImporter
@@ -29,11 +29,11 @@ about=
   • Comprehensive processing reports
 
 changelog=
- Version 1.0.0 (Feb 2026)
-  • Initial release with class-based refactored architecture
-  • Full QGIS 3.44.0 integration tested and verified
-  • Processing provider integration
-  • Menu-based UI for easy access
+ Version 2.0.0 (Mar 2026)
+  • Switched source structure to 01_BEV_Rawdata with legacy compatibility
+  • Added on-demand ZIP extraction by selected source folder name
+  • Grouped output artifacts into per-project folders matching sync layout
+  • Removed output archive generation
 
 experimental=False
 deprecated=False
