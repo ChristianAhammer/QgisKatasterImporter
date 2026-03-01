@@ -5,7 +5,7 @@ setlocal EnableExtensions
 if "%~1"=="" (
     echo Usage: run_mcp_integration_test.bat ^<path-to-project.qgs^|.qgz^> [additional black-box args]
     echo Example:
-    echo   run_mcp_integration_test.bat "C:\Users\Christian\Meine Ablage\QGIS\03_QField_Output\kataster_51235_qfield\kataster_51235_qfield.qgz"
+    echo   run_mcp_integration_test.bat "C:\Users\Christian\Meine Ablage\bev-qfield-workbench-data\03_QField_Output\kataster_51235_qfield\kataster_51235_qfield.qgz"
     exit /b 1
 )
 

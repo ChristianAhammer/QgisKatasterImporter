@@ -72,7 +72,7 @@ except ImportError as e:
 
 # Test BEVToQFieldConfig instantiation
 try:
-    base_path = r"C:\Users\Christian\Meine Ablage (ca19770610@gmail.com)\QGIS"
+    base_path = r"C:\Users\Christian\Meine Ablage (ca19770610@gmail.com)\bev-qfield-workbench-data"
     config = BEVToQFieldConfig(base_path)
     print(f"✓ BEVToQFieldConfig instantiated")
     print(f"  - Base: {config.base}")

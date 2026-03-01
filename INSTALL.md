@@ -75,7 +75,7 @@ ModuleNotFoundError: No module named 'bev_to_qfield'
 
 1. **Create directory structure**:
    ```
-   C:\Users\<YourUsername>\Meine Ablage\QGIS\
+   C:\Users\<YourUsername>\Meine Ablage\bev-qfield-workbench-data\
    ├── 01_BEV_Rawdata/            ← Add your files here
    ├── 02_QGIS_Processing/
    │   └── grids/

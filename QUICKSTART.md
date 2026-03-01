@@ -38,10 +38,10 @@ bev_to_qfield_plugin\install_plugin.bat
 ## Before First Use
 
 ### Create Directory Structure
-Create this folder at: `C:\Users\<YourUsername>\Meine Ablage (ca19770610@gmail.com)\QGIS\`
+Create this folder at: `C:\Users\<YourUsername>\Meine Ablage (ca19770610@gmail.com)\bev-qfield-workbench-data\`
 
 ```
-QGIS/
+bev-qfield-workbench-data/
 ├── 01_BEV_Rawdata/         ← Place your input files here
 ├── 02_QGIS_Processing/
 │   └── grids/              ← Optional NTv2 (.gsb) & geoid (.tif)

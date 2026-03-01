@@ -67,13 +67,13 @@ Run:
 
 ```bash
 python3 scripts/qgis_mcp_blackbox_check.py \
-  --project "C:\Users\<YourUser>\Meine Ablage\QGIS\03_QField_Output\kataster_44106_qfield.qgz"
+  --project "C:\Users\<YourUser>\Meine Ablage\bev-qfield-workbench-data\03_QField_Output\kataster_44106_qfield.qgz"
 ```
 
 Windows wrapper:
 
 ```batch
-run_mcp_blackbox_test.bat "C:\Users\<YourUser>\Meine Ablage\QGIS\03_QField_Output\kataster_44106_qfield.qgz"
+run_mcp_blackbox_test.bat "C:\Users\<YourUser>\Meine Ablage\bev-qfield-workbench-data\03_QField_Output\kataster_44106_qfield.qgz"
 ```
 
 Behavior:
@@ -94,7 +94,7 @@ This wrapper performs the full two-step flow automatically:
 Run:
 
 ```batch
-run_mcp_integration_test.bat "C:\Users\<YourUser>\Meine Ablage\QGIS\03_QField_Output\kataster_44106_qfield\kataster_44106_qfield.qgz"
+run_mcp_integration_test.bat "C:\Users\<YourUser>\Meine Ablage\bev-qfield-workbench-data\03_QField_Output\kataster_44106_qfield\kataster_44106_qfield.qgz"
 ```
 
 Optional:
@@ -106,7 +106,7 @@ Optional output summary:
 
 ```bash
 python3 scripts/qgis_mcp_blackbox_check.py \
-  --project "C:\Users\<YourUser>\Meine Ablage\QGIS\03_QField_Output\kataster_44106_qfield.qgz" \
+  --project "C:\Users\<YourUser>\Meine Ablage\bev-qfield-workbench-data\03_QField_Output\kataster_44106_qfield.qgz" \
   --summary-json scripts/_mcp_blackbox_summary.json
 ```
 

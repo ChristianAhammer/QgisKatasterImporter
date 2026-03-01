@@ -22,7 +22,7 @@ Convert BEV cadastral raw data (5-digit KatastralGemeinde number) into QField-re
 - Previous location `C:\Users\Christian\GitRepos` may exist as a junction.
 - QGIS Python launcher is expected under `C:\OSGeo4W\...`.
 - Main config file is usually:
-  `C:\Users\Christian\Meine Ablage (ca19770610@gmail.com)\QGIS\02_QGIS_Processing\qfieldcloud.env`
+  `C:\Users\Christian\Meine Ablage (ca19770610@gmail.com)\bev-qfield-workbench-data\02_QGIS_Processing\qfieldcloud.env`
 
 ## Workflow Rules
 

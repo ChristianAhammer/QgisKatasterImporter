@@ -47,6 +47,36 @@ TEMP_GPKG_NAME = "kataster_qfield_tmp.gpkg"
 WMTS_LAYER_NAME = "BEV Orthofoto (basemap.at)"
 GEOID_PATTERN_NAME = "GV_Hoehengrid*.tif"
 
+
+def _resolve_default_base_path() -> str:
+    """Resolve default workspace root with legacy fallback."""
+    explicit = os.environ.get("QFC_BASE_PATH")
+    if explicit:
+        return explicit
+
+    userprofile = os.environ.get("USERPROFILE", "")
+    cloud_roots = sorted(glob.glob(os.path.join(userprofile, "Meine Ablage*"))) if userprofile else []
+
+    preferred = []
+    for cloud_root in cloud_roots:
+        preferred.append(os.path.join(cloud_root, "bev-qfield-workbench-data"))
+    if userprofile:
+        preferred.append(os.path.join(userprofile, "bev-qfield-workbench-data"))
+
+    legacy = []
+    for cloud_root in cloud_roots:
+        legacy.append(os.path.join(cloud_root, "QGIS"))
+    if userprofile:
+        legacy.append(os.path.join(userprofile, "QGIS"))
+
+    for candidate in preferred + legacy:
+        if os.path.isdir(candidate):
+            return candidate
+
+    if preferred:
+        return preferred[0]
+    return "bev-qfield-workbench-data"
+
 # ---------- Configuration Class ----------
 class BEVToQFieldConfig:
     """Configuration and settings for BEV to QField conversion."""
@@ -412,7 +442,7 @@ class BEVToQField:
 # ---------- Entry Point ----------
 if __name__ == "__main__":
     try:
-        base_path = r"C:\Users\Christian\Meine Ablage (ca19770610@gmail.com)\QGIS"
+        base_path = _resolve_default_base_path()
         config = BEVToQFieldConfig(base_path)
         converter = BEVToQField(config)
         converter.run()

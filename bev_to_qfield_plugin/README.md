@@ -43,7 +43,7 @@ git clone https://github.com/ChristianAhammer/bev-qfield-workbench.git bev_to_qf
 The plugin expects the following directory structure in your QGIS folder:
 
 ```
-C:\Users\<YourUsername>\Meine Ablage (ca19770610@gmail.com)\QGIS\
+C:\Users\<YourUsername>\Meine Ablage (ca19770610@gmail.com)\bev-qfield-workbench-data\
 ├── 01_BEV_Rawdata/                # ← Place your input BEV data here
 ├── 02_QGIS_Processing/
 │   └── grids/                     # ← Optional NTv2 (.gsb) and geoid grids (.tif)

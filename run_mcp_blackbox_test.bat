@@ -5,7 +5,7 @@ setlocal
 if "%~1"=="" (
     echo Usage: run_mcp_blackbox_test.bat ^<path-to-project.qgs^|.qgz^> [additional args]
     echo Example:
-    echo   run_mcp_blackbox_test.bat "C:\Users\Christian\Meine Ablage\QGIS\03_QField_Output\kataster_44106_qfield.qgz"
+    echo   run_mcp_blackbox_test.bat "C:\Users\Christian\Meine Ablage\bev-qfield-workbench-data\03_QField_Output\kataster_44106_qfield.qgz"
     exit /b 1
 )
 

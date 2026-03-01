@@ -7,6 +7,8 @@ set "QFC_SYNC_SCRIPT=%SCRIPT_DIR%scripts\qfieldcloud_sync.py"
 set "KG_LOOKUP_SCRIPT=%SCRIPT_DIR%scripts\kg_mapping_lookup.py"
 set "POWERSHELL_EXE=%SystemRoot%\System32\WindowsPowerShell\v1.0\powershell.exe"
 set "QFC_CONFIG_FILE="
+set "QFC_WORKROOT_NAME=bev-qfield-workbench-data"
+set "QFC_LEGACY_WORKROOT_NAME=QGIS"
 set "KG_MAP_CACHE="
 set "KG_MAP_FILE="
 set "KG_MAP_COUNT="
@@ -46,15 +48,21 @@ if not defined QGIS_PY (
   exit /b 2
 )
 
-if not defined QFC_CONFIG_FILE if exist "%USERPROFILE%\QGIS\02_QGIS_Processing\qfieldcloud.env" set "QFC_CONFIG_FILE=%USERPROFILE%\QGIS\02_QGIS_Processing\qfieldcloud.env"
+if not defined QFC_CONFIG_FILE if exist "%USERPROFILE%\%QFC_WORKROOT_NAME%\02_QGIS_Processing\qfieldcloud.env" set "QFC_CONFIG_FILE=%USERPROFILE%\%QFC_WORKROOT_NAME%\02_QGIS_Processing\qfieldcloud.env"
+if not defined QFC_CONFIG_FILE if exist "%USERPROFILE%\%QFC_LEGACY_WORKROOT_NAME%\02_QGIS_Processing\qfieldcloud.env" set "QFC_CONFIG_FILE=%USERPROFILE%\%QFC_LEGACY_WORKROOT_NAME%\02_QGIS_Processing\qfieldcloud.env"
 if not defined QFC_CONFIG_FILE (
-  for /d %%D in ("%USERPROFILE%\Meine Ablage*\QGIS\02_QGIS_Processing") do (
+  for /d %%D in ("%USERPROFILE%\Meine Ablage*\%QFC_WORKROOT_NAME%\02_QGIS_Processing") do (
+    if exist "%%~fD\qfieldcloud.env" set "QFC_CONFIG_FILE=%%~fD\qfieldcloud.env"
+  )
+)
+if not defined QFC_CONFIG_FILE (
+  for /d %%D in ("%USERPROFILE%\Meine Ablage*\%QFC_LEGACY_WORKROOT_NAME%\02_QGIS_Processing") do (
     if exist "%%~fD\qfieldcloud.env" set "QFC_CONFIG_FILE=%%~fD\qfieldcloud.env"
   )
 )
 if not defined QFC_CONFIG_FILE if exist "%POWERSHELL_EXE%" (
   set "QFC_CFG_PICK=%TEMP%\qfc_cfg_pick_%RANDOM%_%RANDOM%.txt"
-  "%POWERSHELL_EXE%" -NoProfile -Command "$cfg = Get-ChildItem -LiteralPath $env:USERPROFILE -Filter qfieldcloud.env -Recurse -ErrorAction SilentlyContinue | Where-Object { $_.FullName -match '\\QGIS\\02_QGIS_Processing\\qfieldcloud\.env$' } | Select-Object -First 1 -ExpandProperty FullName; if($cfg){ Set-Content -LiteralPath $env:QFC_CFG_PICK -Value $cfg -Encoding Ascii }"
+  "%POWERSHELL_EXE%" -NoProfile -Command "$cfg = Get-ChildItem -LiteralPath $env:USERPROFILE -Filter qfieldcloud.env -Recurse -ErrorAction SilentlyContinue | Where-Object { $_.FullName -match '\\(?:bev-qfield-workbench-data|QGIS)\\02_QGIS_Processing\\qfieldcloud\.env$' } | Select-Object -First 1 -ExpandProperty FullName; if($cfg){ Set-Content -LiteralPath $env:QFC_CFG_PICK -Value $cfg -Encoding Ascii }"
   if exist "!QFC_CFG_PICK!" (
     set /p QFC_CONFIG_FILE=<"!QFC_CFG_PICK!"
     del /q "!QFC_CFG_PICK!" >nul 2>nul
@@ -99,20 +107,36 @@ if not defined RAWDATA_ROOT if defined QFC_CONFIG_FILE (
   )
 )
 if not defined RAWDATA_ROOT (
-  for /d %%D in ("%USERPROFILE%\Meine Ablage*\QGIS\01_BEV_Rawdata") do (
+  for /d %%D in ("%USERPROFILE%\Meine Ablage*\%QFC_WORKROOT_NAME%\01_BEV_Rawdata") do (
     if not defined RAWDATA_ROOT if exist "%%~fD" set "RAWDATA_ROOT=%%~fD"
   )
 )
 if not defined RAWDATA_ROOT (
-  for /d %%D in ("%USERPROFILE%\Meine Ablage*\QGIS\01_BEV_Rohdaten") do (
+  for /d %%D in ("%USERPROFILE%\Meine Ablage*\%QFC_WORKROOT_NAME%\01_BEV_Rohdaten") do (
     if not defined RAWDATA_ROOT if exist "%%~fD" set "RAWDATA_ROOT=%%~fD"
   )
 )
-if not defined RAWDATA_ROOT if exist "%USERPROFILE%\QGIS\01_BEV_Rawdata\" (
-  set "RAWDATA_ROOT=%USERPROFILE%\QGIS\01_BEV_Rawdata"
+if not defined RAWDATA_ROOT (
+  for /d %%D in ("%USERPROFILE%\Meine Ablage*\%QFC_LEGACY_WORKROOT_NAME%\01_BEV_Rawdata") do (
+    if not defined RAWDATA_ROOT if exist "%%~fD" set "RAWDATA_ROOT=%%~fD"
+  )
 )
-if not defined RAWDATA_ROOT if exist "%USERPROFILE%\QGIS\01_BEV_Rohdaten\" (
-  set "RAWDATA_ROOT=%USERPROFILE%\QGIS\01_BEV_Rohdaten"
+if not defined RAWDATA_ROOT (
+  for /d %%D in ("%USERPROFILE%\Meine Ablage*\%QFC_LEGACY_WORKROOT_NAME%\01_BEV_Rohdaten") do (
+    if not defined RAWDATA_ROOT if exist "%%~fD" set "RAWDATA_ROOT=%%~fD"
+  )
+)
+if not defined RAWDATA_ROOT if exist "%USERPROFILE%\%QFC_WORKROOT_NAME%\01_BEV_Rawdata\" (
+  set "RAWDATA_ROOT=%USERPROFILE%\%QFC_WORKROOT_NAME%\01_BEV_Rawdata"
+)
+if not defined RAWDATA_ROOT if exist "%USERPROFILE%\%QFC_WORKROOT_NAME%\01_BEV_Rohdaten\" (
+  set "RAWDATA_ROOT=%USERPROFILE%\%QFC_WORKROOT_NAME%\01_BEV_Rohdaten"
+)
+if not defined RAWDATA_ROOT if exist "%USERPROFILE%\%QFC_LEGACY_WORKROOT_NAME%\01_BEV_Rawdata\" (
+  set "RAWDATA_ROOT=%USERPROFILE%\%QFC_LEGACY_WORKROOT_NAME%\01_BEV_Rawdata"
+)
+if not defined RAWDATA_ROOT if exist "%USERPROFILE%\%QFC_LEGACY_WORKROOT_NAME%\01_BEV_Rohdaten\" (
+  set "RAWDATA_ROOT=%USERPROFILE%\%QFC_LEGACY_WORKROOT_NAME%\01_BEV_Rohdaten"
 )
 if defined RAWDATA_ROOT set "RAWDATA_ROOT=!RAWDATA_ROOT:/=\!"
 if defined QFC_KG_MAPPING_FILE set "QFC_KG_MAPPING_FILE=!QFC_KG_MAPPING_FILE:/=\!"

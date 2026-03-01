@@ -93,7 +93,7 @@ Output: ETRS89/UTM33N (EPSG:25833) ready for QField
 ## 📁 Directory Structure
 
 ```
-C:\Users\<YourUser>\Meine Ablage\QGIS\
+C:\Users\<YourUser>\Meine Ablage\bev-qfield-workbench-data\
 ├── 01_BEV_Rawdata/            ← Input BEV data
 │   └── KG_Verzeichnis.zip      ← Optional KG number→name mapping (BEV)
 ├── 02_QGIS_Processing/
@@ -145,12 +145,12 @@ run_qgis_test.bat
 
 ### MCP Black-Box Check (QGIS MCP server)
 ```batch
-run_mcp_blackbox_test.bat "C:\Users\<YourUser>\Meine Ablage\QGIS\03_QField_Output\kataster_44106_qfield.qgz"
+run_mcp_blackbox_test.bat "C:\Users\<YourUser>\Meine Ablage\bev-qfield-workbench-data\03_QField_Output\kataster_44106_qfield.qgz"
 ```
 
 ### MCP Integration Test (auto-start QGIS + MCP)
 ```batch
-run_mcp_integration_test.bat "C:\Users\<YourUser>\Meine Ablage\QGIS\03_QField_Output\kataster_44106_qfield\kataster_44106_qfield.qgz"
+run_mcp_integration_test.bat "C:\Users\<YourUser>\Meine Ablage\bev-qfield-workbench-data\03_QField_Output\kataster_44106_qfield\kataster_44106_qfield.qgz"
 ```
 
 By default the wrapper closes the QGIS instance it started after the test run.
