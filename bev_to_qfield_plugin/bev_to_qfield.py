@@ -49,7 +49,7 @@ GEOID_PATTERN_NAME = "GV_Hoehengrid*.tif"
 
 
 def _resolve_default_base_path() -> str:
-    """Resolve default workspace root with legacy fallback."""
+    """Resolve default workspace root."""
     explicit = os.environ.get("QFC_BASE_PATH")
     if explicit:
         return explicit
@@ -63,13 +63,7 @@ def _resolve_default_base_path() -> str:
     if userprofile:
         preferred.append(os.path.join(userprofile, "bev-qfield-workbench-data"))
 
-    legacy = []
-    for cloud_root in cloud_roots:
-        legacy.append(os.path.join(cloud_root, "QGIS"))
-    if userprofile:
-        legacy.append(os.path.join(userprofile, "QGIS"))
-
-    for candidate in preferred + legacy:
+    for candidate in preferred:
         if os.path.isdir(candidate):
             return candidate
 

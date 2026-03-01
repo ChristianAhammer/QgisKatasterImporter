@@ -29,30 +29,30 @@ class KatasterCommonTests(unittest.TestCase):
         )
 
     def test_qgis_base_from_source(self):
-        path = r"C:\Users\Example\QGIS\01_BEV_Rawdata\44106"
+        path = r"C:\Users\Example\bev-qfield-workbench-data\01_BEV_Rawdata\44106"
         self.assertEqual(
             qgis_base_from_source(path),
-            os.path.normpath("C:/Users/Example/QGIS"),
+            os.path.normpath("C:/Users/Example/bev-qfield-workbench-data"),
         )
-        legacy_path = r"C:\Users\Example\QGIS\01_BEV_Rohdaten\44106"
+        legacy_path = r"C:\Users\Example\bev-qfield-workbench-data\01_BEV_Rohdaten\44106"
         self.assertEqual(
             qgis_base_from_source(legacy_path),
-            os.path.normpath("C:/Users/Example/QGIS"),
+            os.path.normpath("C:/Users/Example/bev-qfield-workbench-data"),
         )
         self.assertIsNone(qgis_base_from_source(r"C:\tmp\raw_data"))
 
     def test_qgis_base_from_target(self):
-        path = r"C:\Users\Example\QGIS\03_QField_Output\kataster_44106_qfield.gpkg"
+        path = r"C:\Users\Example\bev-qfield-workbench-data\03_QField_Output\kataster_44106_qfield.gpkg"
         self.assertEqual(
             qgis_base_from_target(path),
-            os.path.normpath("C:/Users/Example/QGIS"),
+            os.path.normpath("C:/Users/Example/bev-qfield-workbench-data"),
         )
         self.assertIsNone(qgis_base_from_target(r"C:\tmp\out.gpkg"))
 
     def test_default_output_path_for_bev_structure(self):
-        source = r"C:\Users\Example\QGIS\01_BEV_Rawdata\44106"
+        source = r"C:\Users\Example\bev-qfield-workbench-data\01_BEV_Rawdata\44106"
         expected = os.path.normpath(
-            "C:/Users/Example/QGIS/03_QField_Output/kataster_44106_qfield/kataster_44106_qfield.gpkg"
+            "C:/Users/Example/bev-qfield-workbench-data/03_QField_Output/kataster_44106_qfield/kataster_44106_qfield.gpkg"
         )
         self.assertEqual(default_output_path(source), expected)
 
