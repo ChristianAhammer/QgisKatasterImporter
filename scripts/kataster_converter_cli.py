@@ -13,6 +13,7 @@ import math
 import os
 import sqlite3
 import sys
+import traceback
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 REPO_ROOT = os.path.dirname(SCRIPT_DIR)
@@ -535,7 +536,72 @@ def parse_args(argv):
     parser.add_argument('--ntv2-grid', help='Optional explicit path to GIS_Grid .gsb file')
     parser.add_argument('--summary-json', help='Optional output file for machine-readable summary json')
     parser.add_argument('--summary-target-file', help='Optional output file containing target_gpkg path')
+    parser.add_argument('--cloud-project-id', help='Optional QFieldCloud project id; enables post-conversion sync')
+    parser.add_argument('--cloud-project-path', help='Optional upload folder path; defaults to target GPKG folder')
+    parser.add_argument('--cloud-url', default='https://app.qfield.cloud/api/v1/', help='QFieldCloud API base URL')
+    parser.add_argument('--cloud-token', help='QFieldCloud API token')
+    parser.add_argument('--cloud-username', help='QFieldCloud username')
+    parser.add_argument('--cloud-email', help='QFieldCloud email (alternative to username)')
+    parser.add_argument('--cloud-password', help='QFieldCloud password (only if no token)')
+    parser.add_argument('--cloud-auto-create', action='store_true', help='Create cloud project if missing')
+    parser.add_argument('--cloud-wait-timeout', type=int, default=600, help='Cloud job wait timeout in seconds')
+    parser.add_argument('--cloud-poll-seconds', type=int, default=5, help='Cloud job poll interval in seconds')
+    parser.add_argument('--cloud-summary-json', help='Optional output file for cloud sync summary json')
     return parser.parse_args(argv)
+
+
+def run_cloud_sync(args, result):
+    cloud_info = {
+        'requested': bool(args.cloud_project_id),
+        'project_id': args.cloud_project_id or '',
+        'project_path': '',
+        'exit_code': 0,
+    }
+    if not args.cloud_project_id:
+        return cloud_info
+
+    project_path = os.path.normpath(args.cloud_project_path) if args.cloud_project_path else os.path.dirname(result['target_gpkg'])
+    cloud_info['project_path'] = project_path
+    if not os.path.isdir(project_path):
+        raise RuntimeError(f'Cloud sync project folder not found: {project_path}')
+
+    try:
+        import qfieldcloud_sync
+    except Exception as err:
+        raise RuntimeError(
+            f'Cloud sync requested but qfieldcloud_sync module could not be loaded: {err}'
+        ) from err
+
+    sync_args = [
+        '--project-id',
+        args.cloud_project_id,
+        '--project-path',
+        project_path,
+        '--url',
+        args.cloud_url,
+        '--wait-timeout',
+        str(args.cloud_wait_timeout),
+        '--poll-seconds',
+        str(args.cloud_poll_seconds),
+    ]
+    if args.cloud_token:
+        sync_args.extend(['--token', args.cloud_token])
+    if args.cloud_username:
+        sync_args.extend(['--username', args.cloud_username])
+    if args.cloud_email:
+        sync_args.extend(['--email', args.cloud_email])
+    if args.cloud_password:
+        sync_args.extend(['--password', args.cloud_password])
+    if args.cloud_auto_create:
+        sync_args.append('--auto-create')
+    if args.cloud_summary_json:
+        sync_args.extend(['--summary-json', args.cloud_summary_json])
+
+    print('')
+    print('Starting QFieldCloud sync...')
+    cloud_exit = qfieldcloud_sync.main(sync_args)
+    cloud_info['exit_code'] = int(cloud_exit)
+    return cloud_info
 
 
 def main(argv):
@@ -544,6 +610,7 @@ def main(argv):
     source_folder = os.path.normpath(args.source)
     target_gpkg = os.path.normpath(args.target) if args.target else default_output_path(source_folder)
 
+    result = None
     qgs = QgsApplication([], False)
     qgs.initQgis()
     if processing is None or Processing is None:
@@ -555,15 +622,28 @@ def main(argv):
     try:
         result = convert(source_folder, target_gpkg, ntv2_grid_path=args.ntv2_grid)
         print_summary(result)
-        if args.summary_json:
-            with open(args.summary_json, 'w', encoding='utf-8') as handle:
-                json.dump(result, handle, ensure_ascii=False, indent=2)
-        if args.summary_target_file:
-            with open(args.summary_target_file, 'w', encoding='utf-8') as handle:
-                handle.write(result['target_gpkg'] + '\n')
-        return 1 if result['failed_layers'] else 0
     finally:
         qgs.exitQgis()
+
+    conversion_exit_code = 1 if result['failed_layers'] else 0
+    if conversion_exit_code:
+        print('')
+        print('WARNING: Conversion reported failed layers.')
+        if args.cloud_project_id:
+            print('Continuing with cloud sync because --cloud-project-id was provided.')
+
+    cloud_info = run_cloud_sync(args, result)
+    result['cloud_sync'] = cloud_info
+    cloud_exit_code = int(cloud_info.get('exit_code') or 0)
+
+    if args.summary_json:
+        with open(args.summary_json, 'w', encoding='utf-8') as handle:
+            json.dump(result, handle, ensure_ascii=False, indent=2)
+    if args.summary_target_file:
+        with open(args.summary_target_file, 'w', encoding='utf-8') as handle:
+            handle.write(result['target_gpkg'] + '\n')
+
+    return 1 if (conversion_exit_code or cloud_exit_code) else 0
 
 
 if __name__ == '__main__':
@@ -575,4 +655,6 @@ if __name__ == '__main__':
             print(f'{COLOR_RED}Fatal: {err}{COLOR_RESET}', file=sys.stderr)
         else:
             print(f'Fatal: {err}', file=sys.stderr)
+            if os.environ.get('QFC_DEBUG_TRACEBACK') == '1':
+                traceback.print_exc(file=sys.stderr)
         sys.exit(2)

@@ -4,8 +4,14 @@ setlocal EnableExtensions EnableDelayedExpansion
 set "SCRIPT_DIR=%~dp0"
 set "CLI_SCRIPT=%SCRIPT_DIR%scripts\kataster_converter_cli.py"
 set "QFC_SYNC_SCRIPT=%SCRIPT_DIR%scripts\qfieldcloud_sync.py"
+set "KG_LOOKUP_SCRIPT=%SCRIPT_DIR%scripts\kg_mapping_lookup.py"
 set "POWERSHELL_EXE=%SystemRoot%\System32\WindowsPowerShell\v1.0\powershell.exe"
 set "QFC_CONFIG_FILE="
+set "KG_MAP_CACHE="
+set "KG_MAP_FILE="
+set "KG_MAP_COUNT="
+set "KG_MAP_EXTRACTED_FROM="
+set "KG_MAP_ERROR="
 
 if "%OSGEO4W_ROOT%"=="" set "OSGEO4W_ROOT=C:\OSGeo4W"
 
@@ -18,6 +24,9 @@ if not exist "%QFC_SYNC_SCRIPT%" (
   echo ERROR: Script not found: %QFC_SYNC_SCRIPT%
   pause
   exit /b 2
+)
+if not exist "%KG_LOOKUP_SCRIPT%" (
+  echo WARNING: KG lookup helper not found: %KG_LOOKUP_SCRIPT%
 )
 
 if not exist "%OSGEO4W_ROOT%\bin\o4w_env.bat" (
@@ -61,6 +70,7 @@ if defined QFC_CONFIG_FILE if exist "!QFC_CONFIG_FILE!" (
     if /I "%%A"=="QFC_PROCESSING_ROOT" if "!QFC_PROCESSING_ROOT!"=="" set "QFC_PROCESSING_ROOT=%%B"
     if /I "%%A"=="QFC_OUTPUT_ROOT" if "!QFC_OUTPUT_ROOT!"=="" set "QFC_OUTPUT_ROOT=%%B"
     if /I "%%A"=="QFC_SYNC_ROOT" if "!QFC_SYNC_ROOT!"=="" set "QFC_SYNC_ROOT=%%B"
+    if /I "%%A"=="QFC_KG_MAPPING_FILE" if "!QFC_KG_MAPPING_FILE!"=="" set "QFC_KG_MAPPING_FILE=%%B"
   )
 )
 
@@ -104,31 +114,45 @@ if not defined RAWDATA_ROOT if exist "%USERPROFILE%\QGIS\01_BEV_Rawdata\" (
 if not defined RAWDATA_ROOT if exist "%USERPROFILE%\QGIS\01_BEV_Rohdaten\" (
   set "RAWDATA_ROOT=%USERPROFILE%\QGIS\01_BEV_Rohdaten"
 )
+if defined RAWDATA_ROOT set "RAWDATA_ROOT=!RAWDATA_ROOT:/=\!"
+if defined QFC_KG_MAPPING_FILE set "QFC_KG_MAPPING_FILE=!QFC_KG_MAPPING_FILE:/=\!"
 if defined RAWDATA_ROOT (
   set "SOURCE_BROWSE_ROOT=!RAWDATA_ROOT!"
   call :ensure_rawdata_ready "!RAWDATA_ROOT!"
+  call :prepare_kg_lookup "!RAWDATA_ROOT!"
   if not exist "!SOURCE_BROWSE_ROOT!\" set "SOURCE_BROWSE_ROOT="
 )
 if defined SOURCE_BROWSE_ROOT set "QFC_BROWSE_HINT=!SOURCE_BROWSE_ROOT!"
 if defined SOURCE_BROWSE_ROOT (
   echo Source root: !SOURCE_BROWSE_ROOT!
   echo.
-  echo Available source subfolders:
+  echo already extracted KG's:
   set /a SRC_COUNT=0
   for /f "delims=" %%D in ('dir /b /ad "!SOURCE_BROWSE_ROOT!" 2^>nul') do (
     if /I not "%%D"=="entzippt" (
-      set /a SRC_COUNT+=1
-      set "SRC_NAME_!SRC_COUNT!=%%D"
-      set "SRC_PATH_!SRC_COUNT!=!SOURCE_BROWSE_ROOT!\%%D"
-      echo   - %%D
+      echo(%%D| findstr /r "^[0-9][0-9][0-9][0-9][0-9]$" >nul
+      if not errorlevel 1 (
+        set /a SRC_COUNT+=1
+        set "SRC_NAME_!SRC_COUNT!=%%D"
+        set "SRC_PATH_!SRC_COUNT!=!SOURCE_BROWSE_ROOT!\%%D"
+        set "SRC_LABEL=%%D"
+        call :lookup_kg_name "%%D" SRC_KG_NAME
+        if defined SRC_KG_NAME set "SRC_LABEL=%%D ^(!SRC_KG_NAME!^)"
+        echo   - !SRC_LABEL!
+      )
     )
   )
   echo.
   if !SRC_COUNT! LEQ 0 echo No extracted source subfolders found yet in Rawdata.
+  echo Enter the 5-digit KatastralGemeinde number ^(KG-Nr.^), e.g. 51235.
   set "USE_DIALOG=0"
-  set /p SRC_CHOICE=Choose folder name ^(D = folder dialog, ENTER = manual path^): 
+  set /p SRC_CHOICE=KG-Nr. / folder name ^(D = folder dialog, ENTER = manual path^): 
   if defined SRC_CHOICE (
     for /f "tokens=* delims= " %%Z in ("!SRC_CHOICE!") do set "SRC_CHOICE=%%Z"
+  )
+  if defined SRC_CHOICE (
+    call :lookup_kg_name "!SRC_CHOICE!" SRC_CHOICE_KG_NAME
+    if defined SRC_CHOICE_KG_NAME echo KG-Nr. !SRC_CHOICE! = !SRC_CHOICE_KG_NAME!
   )
   if defined SRC_CHOICE (
     if /I "!SRC_CHOICE!"=="D" (
@@ -147,7 +171,11 @@ if defined SOURCE_BROWSE_ROOT (
     )
   )
   if not defined SOURCE if defined SRC_CHOICE if /I not "!SRC_CHOICE!"=="D" (
-    echo Folder not available: !SRC_CHOICE!
+    if defined SRC_CHOICE_KG_NAME (
+      echo Folder / KG-Nr. not available: !SRC_CHOICE! ^(!SRC_CHOICE_KG_NAME!^)
+    ) else (
+      echo Folder / KG-Nr. not available: !SRC_CHOICE!
+    )
   )
 )
 
@@ -162,13 +190,18 @@ if "!SOURCE!"=="" if "!USE_DIALOG!"=="1" if exist "%POWERSHELL_EXE%" (
 
 if "!SOURCE!"=="" (
   if "!USE_DIALOG!"=="1" echo No folder selected in dialog.
-  set /p SOURCE=Source folder path ^(e.g. C:\...\01_BEV_Rawdata\51234^): 
+  set /p SOURCE=Source folder path ^(e.g. C:\...\01_BEV_Rawdata\51235 where 51235 = KG-Nr.^): 
 )
 
 if "!SOURCE!"=="" (
   echo ERROR: Source is required.
   pause
   exit /b 2
+)
+for %%I in ("!SOURCE!") do set "SOURCE_FOLDER=%%~nxI"
+call :lookup_kg_name "!SOURCE_FOLDER!" SOURCE_KG_NAME
+if defined SOURCE_KG_NAME (
+  echo Selected KatastralGemeinde: !SOURCE_FOLDER! ^(!SOURCE_KG_NAME!^)
 )
 echo.
 set "TARGET="
@@ -244,6 +277,7 @@ if defined SYNC_ROOT if defined PROJECT_STEM (
     if defined QFC_PROCESSING_ROOT >> "!QFC_CONFIG_FILE!" echo QFC_PROCESSING_ROOT=!QFC_PROCESSING_ROOT!
     if defined QFC_OUTPUT_ROOT >> "!QFC_CONFIG_FILE!" echo QFC_OUTPUT_ROOT=!QFC_OUTPUT_ROOT!
     if defined QFC_SYNC_ROOT >> "!QFC_CONFIG_FILE!" echo QFC_SYNC_ROOT=!QFC_SYNC_ROOT!
+    if defined QFC_KG_MAPPING_FILE >> "!QFC_CONFIG_FILE!" echo QFC_KG_MAPPING_FILE=!QFC_KG_MAPPING_FILE!
   )
 )
 
@@ -301,6 +335,7 @@ if defined QFC_CONFIG_FILE if exist "!QFC_CONFIG_FILE!" (
     if /I "%%A"=="QFC_PROCESSING_ROOT" if "!QFC_PROCESSING_ROOT!"=="" set "QFC_PROCESSING_ROOT=%%B"
     if /I "%%A"=="QFC_OUTPUT_ROOT" if "!QFC_OUTPUT_ROOT!"=="" set "QFC_OUTPUT_ROOT=%%B"
     if /I "%%A"=="QFC_SYNC_ROOT" if "!QFC_SYNC_ROOT!"=="" set "QFC_SYNC_ROOT=%%B"
+    if /I "%%A"=="QFC_KG_MAPPING_FILE" if "!QFC_KG_MAPPING_FILE!"=="" set "QFC_KG_MAPPING_FILE=%%B"
   )
   echo Loaded QFieldCloud config: !QFC_CONFIG_FILE!
 )
@@ -393,6 +428,75 @@ echo %CLOUD_SUMMARY%
 echo.
 pause
 exit /b %EXITCODE%
+
+:prepare_kg_lookup
+set "KG_LOOKUP_ROOT=%~1"
+if defined KG_MAP_CACHE goto :eof
+if not defined KG_LOOKUP_ROOT goto :eof
+if not exist "!KG_LOOKUP_ROOT!\" goto :eof
+if not exist "%KG_LOOKUP_SCRIPT%" goto :eof
+
+set "KG_MAP_STATUS=%TEMP%\kg_map_status_%RANDOM%_%RANDOM%.txt"
+set "KG_MAP_TMP=%TEMP%\kg_map_cache_%RANDOM%_%RANDOM%.txt"
+set "KG_MAP_ERROR="
+if defined QFC_KG_MAPPING_FILE (
+  call "%QGIS_PY%" "%KG_LOOKUP_SCRIPT%" --rawdata-root "!KG_LOOKUP_ROOT!" --mapping-file "!QFC_KG_MAPPING_FILE!" --cache-out "!KG_MAP_TMP!" --status-file "!KG_MAP_STATUS!" >nul 2>nul
+) else (
+  call "%QGIS_PY%" "%KG_LOOKUP_SCRIPT%" --rawdata-root "!KG_LOOKUP_ROOT!" --cache-out "!KG_MAP_TMP!" --status-file "!KG_MAP_STATUS!" >nul 2>nul
+)
+set "KG_LOOKUP_EXIT=%ERRORLEVEL%"
+
+if exist "!KG_MAP_STATUS!" (
+  for /f "usebackq eol=# tokens=1,* delims==" %%A in ("!KG_MAP_STATUS!") do (
+    if /I "%%A"=="MAPPING_FILE" set "KG_MAP_FILE=%%B"
+    if /I "%%A"=="EXTRACTED_FROM" set "KG_MAP_EXTRACTED_FROM=%%B"
+    if /I "%%A"=="COUNT" set "KG_MAP_COUNT=%%B"
+    if /I "%%A"=="ERROR" set "KG_MAP_ERROR=%%B"
+  )
+  del /q "!KG_MAP_STATUS!" >nul 2>nul
+)
+
+if "%KG_LOOKUP_EXIT%"=="0" (
+  if exist "!KG_MAP_TMP!" (
+    set "KG_MAP_CACHE=!KG_MAP_TMP!"
+    if defined KG_MAP_FILE (
+      echo KG mapping loaded: !KG_MAP_FILE! ^(!KG_MAP_COUNT! entries^)
+    ) else (
+      echo KG mapping loaded.
+    )
+    if defined KG_MAP_EXTRACTED_FROM echo KG mapping extracted from ZIP: !KG_MAP_EXTRACTED_FROM!
+  ) else (
+    set "KG_MAP_ERROR=KG cache file was not created."
+    echo NOTE: KG name lookup unavailable: !KG_MAP_ERROR!
+  )
+) else (
+  if exist "!KG_MAP_TMP!" del /q "!KG_MAP_TMP!" >nul 2>nul
+  if defined KG_MAP_ERROR (
+    echo NOTE: KG name lookup unavailable: !KG_MAP_ERROR!
+  ) else (
+    echo NOTE: KG name lookup unavailable.
+  )
+)
+goto :eof
+
+:lookup_kg_name
+set "KG_LOOKUP_NUMBER=%~1"
+set "KG_LOOKUP_RESULT="
+if not defined KG_LOOKUP_NUMBER goto kg_lookup_done
+if not defined KG_MAP_CACHE goto kg_lookup_done
+if not exist "!KG_MAP_CACHE!" goto kg_lookup_done
+
+echo(!KG_LOOKUP_NUMBER!| findstr /r "^[0-9][0-9][0-9][0-9][0-9]$" >nul
+if errorlevel 1 goto kg_lookup_done
+
+for /f "usebackq tokens=1,* delims=;" %%A in (`findstr /b /c:"!KG_LOOKUP_NUMBER!;" "!KG_MAP_CACHE!" 2^>nul`) do (
+  set "KG_LOOKUP_RESULT=%%B"
+  goto kg_lookup_done
+)
+
+:kg_lookup_done
+if not "%~2"=="" set "%~2=!KG_LOOKUP_RESULT!"
+goto :eof
 
 :ensure_rawdata_ready
 set "UNZIP_RAWDATA=%~1"

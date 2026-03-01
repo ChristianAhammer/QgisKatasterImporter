@@ -67,6 +67,8 @@ processing_log.txt
 test_outputs/
 temp/
 tmp/
+scripts/_sync_*_summary.json
+scripts/_mcp_blackbox_summary.json
 
 # OS
 Thumbs.db
