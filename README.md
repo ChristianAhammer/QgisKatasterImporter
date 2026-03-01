@@ -1,4 +1,4 @@
-# QgisKatasterImporter
+# bev-qfield-workbench
 
 Convert Austrian cadastral data (BEV - Bundesamt für Eich- und Vermessungswesen) from MGI/Gauß-Krüger to ETRS89/UTM33N and prepare for QField mobile fieldwork.
 
@@ -122,8 +122,8 @@ Copy `bev_to_qfield_plugin/` folder to:
 
 ### Development Installation
 ```bash
-git clone https://github.com/ChristianAhammer/QgisKatasterImporter.git
-cd QgisKatasterImporter/bev_to_qfield_plugin
+git clone https://github.com/ChristianAhammer/bev-qfield-workbench.git
+cd bev-qfield-workbench/bev_to_qfield_plugin
 # Copy to QGIS plugins directory
 ```
 
@@ -259,8 +259,8 @@ GPLv2+ - Same as QGIS
 
 ## 📞 Support
 
-- **GitHub Issues**: [Report issues here](https://github.com/ChristianAhammer/QgisKatasterImporter/issues)
-- **GitHub Discussions**: [Ask questions here](https://github.com/ChristianAhammer/QgisKatasterImporter/discussions)
+- **GitHub Issues**: [Report issues here](https://github.com/ChristianAhammer/bev-qfield-workbench/issues)
+- **GitHub Discussions**: [Ask questions here](https://github.com/ChristianAhammer/bev-qfield-workbench/discussions)
 
 ---
 

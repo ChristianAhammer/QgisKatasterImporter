@@ -122,7 +122,7 @@ to ETRS89/UTM33N format for QField mobile fieldwork.</p>
 
 <h4>Author:</h4>
 <p>Christian Ahammer<br/>
-<a href="https://github.com/ChristianAhammer/QgisKatasterImporter">
+<a href="https://github.com/ChristianAhammer/bev-qfield-workbench">
 GitHub Repository</a></p>
 
 <p style="font-size: 0.9em; color: gray;">

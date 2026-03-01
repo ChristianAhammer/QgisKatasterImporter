@@ -182,7 +182,7 @@ After installing, verify the plugin works:
    - Copy any error messages
 
 2. **Report on GitHub**:
-   - Go to [Issues](https://github.com/ChristianAhammer/QgisKatasterImporter/issues)
+   - Go to [Issues](https://github.com/ChristianAhammer/bev-qfield-workbench/issues)
    - Include:
      - QGIS version (Help → About QGIS)
      - Python version

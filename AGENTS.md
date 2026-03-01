@@ -18,7 +18,7 @@ Convert BEV cadastral raw data (5-digit KatastralGemeinde number) into QField-re
 
 ## Environment Facts
 
-- Repository location: `C:\GitRepos\QgisKatasterImporter`
+- Repository location: `C:\GitRepos\bev-qfield-workbench`
 - Previous location `C:\Users\Christian\GitRepos` may exist as a junction.
 - QGIS Python launcher is expected under `C:\OSGeo4W\...`.
 - Main config file is usually:
@@ -34,7 +34,7 @@ Convert BEV cadastral raw data (5-digit KatastralGemeinde number) into QField-re
 
 - Running `cmd.exe` from WSL starts in a UNC path that can break commands.
 - In every Windows command, first switch to drive/path:
-  `cd /d C:\GitRepos\QgisKatasterImporter`
+  `cd /d C:\GitRepos\bev-qfield-workbench`
 - Be careful with quoting when paths contain spaces and parentheses.
 - Prefer backslashes for Windows `if exist` checks.
 

@@ -21,8 +21,8 @@ Convert Austrian cadastral data from BEV format (MGI/Gauß-Krüger EPSG:31255) t
 
 2. **Copy the plugin:**
    ```bash
-   git clone https://github.com/ChristianAhammer/QgisKatasterImporter.git
-   cp -r QgisKatasterImporter/bev_to_qfield_plugin/ <PLUGINS_DIRECTORY>/bev_to_qfield_plugin
+   git clone https://github.com/ChristianAhammer/bev-qfield-workbench.git
+   cp -r bev-qfield-workbench/bev_to_qfield_plugin/ <PLUGINS_DIRECTORY>/bev_to_qfield_plugin
    ```
 
 3. **Restart QGIS** and enable the plugin via **Plugins** → **Manage and Install Plugins**
@@ -33,7 +33,7 @@ For development and testing:
 
 ```bash
 cd <PLUGINS_DIRECTORY>
-git clone https://github.com/ChristianAhammer/QgisKatasterImporter.git bev_to_qfield_plugin
+git clone https://github.com/ChristianAhammer/bev-qfield-workbench.git bev_to_qfield_plugin
 ```
 
 ## Setup
@@ -88,7 +88,7 @@ For more accurate coordinate transformation and orthometric heights:
 
 ```bash
 # Using OSGeo4W Python
-cd path/to/QgisKatasterImporter
+cd path/to/bev-qfield-workbench
 C:\OSGeo4W\bin\o4w_env.bat
 python bev_to_qfield.py
 ```
@@ -173,8 +173,8 @@ python bev_to_qfield.py
 
 ## Support
 
-- **Issues**: [GitHub Issues](https://github.com/ChristianAhammer/QgisKatasterImporter/issues)
-- **Repository**: [GitHub Repository](https://github.com/ChristianAhammer/QgisKatasterImporter)
+- **Issues**: [GitHub Issues](https://github.com/ChristianAhammer/bev-qfield-workbench/issues)
+- **Repository**: [GitHub Repository](https://github.com/ChristianAhammer/bev-qfield-workbench)
 
 ## License
 

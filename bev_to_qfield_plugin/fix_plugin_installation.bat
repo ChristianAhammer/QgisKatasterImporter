@@ -4,8 +4,11 @@ REM fix_plugin_installation.bat - Reinstalls the plugin with the fix
 setlocal enabledelayedexpansion
 
 REM Define paths
-set "PLUGIN_SOURCE=C:\Users\Christian\Meine Ablage (ca19770610@gmail.com)\GitRepos\QgisKatasterImporter\bev_to_qfield_plugin"
-set "PLUGIN_DEST=C:\Users\Christian\AppData\Roaming\QGIS\QGIS3\profiles\default\python\plugins\bev_to_qfield_plugin"
+set "SCRIPT_DIR=%~dp0"
+if "%SCRIPT_DIR:~-1%"=="\" set "SCRIPT_DIR=%SCRIPT_DIR:~0,-1%"
+set "PLUGIN_SOURCE=%SCRIPT_DIR%"
+set "PLUGINS_ROOT=%APPDATA%\QGIS\QGIS3\profiles\default\python\plugins"
+set "PLUGIN_DEST=%PLUGINS_ROOT%\bev_to_qfield_plugin"
 
 echo.
 echo ========================================
@@ -14,8 +17,9 @@ echo ========================================
 echo.
 
 echo Checking if QGIS plugins directory exists...
-if not exist "C:\Users\Christian\AppData\Roaming\QGIS\QGIS3\profiles\default\python\plugins" (
+if not exist "%PLUGINS_ROOT%" (
     echo ERROR: QGIS plugins directory not found!
+    echo Checked: "%PLUGINS_ROOT%"
     echo.
     pause
     exit /b 1

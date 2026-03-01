@@ -116,4 +116,4 @@ After conversion, in `03_QField_Output/`:
 
 ---
 
-**Questions?** See the [full plugin guide](bev_to_qfield_plugin/README.md) or report [issues on GitHub](https://github.com/ChristianAhammer/QgisKatasterImporter/issues)
+**Questions?** See the [full plugin guide](bev_to_qfield_plugin/README.md) or report [issues on GitHub](https://github.com/ChristianAhammer/bev-qfield-workbench/issues)
