@@ -539,10 +539,8 @@ def parse_args(argv):
     parser.add_argument('--cloud-project-id', help='Optional QFieldCloud project id; enables post-conversion sync')
     parser.add_argument('--cloud-project-path', help='Optional upload folder path; defaults to target GPKG folder')
     parser.add_argument('--cloud-url', default='https://app.qfield.cloud/api/v1/', help='QFieldCloud API base URL')
-    parser.add_argument('--cloud-token', help='QFieldCloud API token')
     parser.add_argument('--cloud-username', help='QFieldCloud username')
     parser.add_argument('--cloud-email', help='QFieldCloud email (alternative to username)')
-    parser.add_argument('--cloud-password', help='QFieldCloud password (only if no token)')
     parser.add_argument('--cloud-auto-create', action='store_true', help='Create cloud project if missing')
     parser.add_argument('--cloud-wait-timeout', type=int, default=600, help='Cloud job wait timeout in seconds')
     parser.add_argument('--cloud-poll-seconds', type=int, default=5, help='Cloud job poll interval in seconds')
@@ -584,14 +582,6 @@ def run_cloud_sync(args, result):
         '--poll-seconds',
         str(args.cloud_poll_seconds),
     ]
-    if args.cloud_token:
-        sync_args.extend(['--token', args.cloud_token])
-    if args.cloud_username:
-        sync_args.extend(['--username', args.cloud_username])
-    if args.cloud_email:
-        sync_args.extend(['--email', args.cloud_email])
-    if args.cloud_password:
-        sync_args.extend(['--password', args.cloud_password])
     if args.cloud_auto_create:
         sync_args.append('--auto-create')
     if args.cloud_summary_json:
@@ -599,6 +589,10 @@ def run_cloud_sync(args, result):
 
     print('')
     print('Starting QFieldCloud sync...')
+    if args.cloud_username:
+        sync_args.extend(['--username', args.cloud_username])
+    if args.cloud_email:
+        sync_args.extend(['--email', args.cloud_email])
     cloud_exit = qfieldcloud_sync.main(sync_args)
     cloud_info['exit_code'] = int(cloud_exit)
     return cloud_info

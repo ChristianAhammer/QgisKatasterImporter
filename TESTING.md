@@ -11,6 +11,8 @@ python3 -m unittest -v \
   test_kataster_common.py \
   test_bump_plugin_version.py \
   test_kg_mapping_lookup.py \
+  test_extract_kg_from_zip.py \
+  test_qfieldcloud_sync.py \
   test_qgis_mcp_blackbox_check.py
 ```
 
@@ -19,6 +21,8 @@ Covered areas:
 - Shared path and naming helpers in `kataster_common.py`
 - Version parsing and metadata update logic in `scripts/bump_plugin_version.py`
 - KG mapping discovery/parsing logic in `scripts/kg_mapping_lookup.py`
+- Secure ZIP extraction helper in `scripts/extract_kg_from_zip.py`
+- QFieldCloud summary redaction helpers in `scripts/qfieldcloud_sync.py`
 - MCP socket client helpers in `scripts/qgis_mcp_blackbox_check.py`
 - Socket-dependent MCP helper unit tests auto-skip in restricted environments
   where socket creation is blocked by sandbox policy.
@@ -29,7 +33,9 @@ Covered areas:
 python3 -m py_compile \
   kataster_converter.py \
   scripts/kataster_converter_cli.py \
+  scripts/extract_kg_from_zip.py \
   scripts/kg_mapping_lookup.py \
+  scripts/qfieldcloud_sync.py \
   scripts/qgis_mcp_blackbox_check.py \
   scripts/bump_plugin_version.py \
   bev_to_qfield.py \
@@ -37,7 +43,9 @@ python3 -m py_compile \
   bev_to_qfield_plugin/bev_converter.py \
   bev_to_qfield_plugin/bev_to_qfield_plugin.py \
   test_qgis_integration.py \
+  test_extract_kg_from_zip.py \
   test_kg_mapping_lookup.py \
+  test_qfieldcloud_sync.py \
   test_qgis_mcp_blackbox_check.py
 ```
 

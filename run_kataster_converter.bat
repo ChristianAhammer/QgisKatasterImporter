@@ -5,6 +5,7 @@ set "SCRIPT_DIR=%~dp0"
 set "CLI_SCRIPT=%SCRIPT_DIR%scripts\kataster_converter_cli.py"
 set "QFC_SYNC_SCRIPT=%SCRIPT_DIR%scripts\qfieldcloud_sync.py"
 set "KG_LOOKUP_SCRIPT=%SCRIPT_DIR%scripts\kg_mapping_lookup.py"
+set "KG_UNZIP_SCRIPT=%SCRIPT_DIR%scripts\extract_kg_from_zip.py"
 set "POWERSHELL_EXE=%SystemRoot%\System32\WindowsPowerShell\v1.0\powershell.exe"
 set "QFC_CONFIG_FILE="
 set "QFC_WORKROOT_NAME=bev-qfield-workbench-data"
@@ -13,27 +14,33 @@ set "KG_MAP_FILE="
 set "KG_MAP_COUNT="
 set "KG_MAP_EXTRACTED_FROM="
 set "KG_MAP_ERROR="
+if defined QFC_SOURCE set "SOURCE=%QFC_SOURCE%"
+if defined QFC_PROJECT_ID set "PROJECT_ID=%QFC_PROJECT_ID%"
+if defined QFC_NO_PAUSE if /I not "%QFC_NO_PAUSE%"=="1" set "QFC_NO_PAUSE=0"
 
 if "%OSGEO4W_ROOT%"=="" set "OSGEO4W_ROOT=C:\OSGeo4W"
 
 if not exist "%CLI_SCRIPT%" (
   echo ERROR: Script not found: %CLI_SCRIPT%
-  pause
+  call :pause_if_interactive
   exit /b 2
 )
 if not exist "%QFC_SYNC_SCRIPT%" (
   echo ERROR: Script not found: %QFC_SYNC_SCRIPT%
-  pause
+  call :pause_if_interactive
   exit /b 2
 )
 if not exist "%KG_LOOKUP_SCRIPT%" (
   echo WARNING: KG lookup helper not found: %KG_LOOKUP_SCRIPT%
 )
+if not exist "%KG_UNZIP_SCRIPT%" (
+  echo WARNING: KG ZIP extraction helper not found: %KG_UNZIP_SCRIPT%
+)
 
 if not exist "%OSGEO4W_ROOT%\bin\o4w_env.bat" (
   echo ERROR: OSGeo4W not found at %OSGEO4W_ROOT%
   echo Set OSGEO4W_ROOT and try again.
-  pause
+  call :pause_if_interactive
   exit /b 2
 )
 
@@ -43,7 +50,7 @@ if not defined QGIS_PY if exist "%OSGEO4W_ROOT%\bin\python-qgis.bat" set "QGIS_P
 
 if not defined QGIS_PY (
   echo ERROR: Could not locate QGIS Python launcher under %OSGEO4W_ROOT%
-  pause
+  call :pause_if_interactive
   exit /b 2
 )
 
@@ -78,7 +85,7 @@ if defined QFC_CONFIG_FILE if exist "!QFC_CONFIG_FILE!" (
 echo.
 echo Kataster Converter (headless)
 echo.
-set "SOURCE="
+if not defined SOURCE set "SOURCE="
 set "SOURCE_BROWSE_ROOT="
 set "RAWDATA_ROOT="
 if defined QFC_RAWDATA_ROOT if exist "!QFC_RAWDATA_ROOT!\" (
@@ -115,6 +122,7 @@ if not defined RAWDATA_ROOT if exist "%USERPROFILE%\%QFC_WORKROOT_NAME%\01_BEV_R
 if not defined RAWDATA_ROOT if exist "%USERPROFILE%\%QFC_WORKROOT_NAME%\01_BEV_Rohdaten\" (
   set "RAWDATA_ROOT=%USERPROFILE%\%QFC_WORKROOT_NAME%\01_BEV_Rohdaten"
 )
+if defined SOURCE set "SOURCE=!SOURCE:/=\!"
 if defined RAWDATA_ROOT set "RAWDATA_ROOT=!RAWDATA_ROOT:/=\!"
 if defined QFC_KG_MAPPING_FILE set "QFC_KG_MAPPING_FILE=!QFC_KG_MAPPING_FILE:/=\!"
 if defined RAWDATA_ROOT (
@@ -124,7 +132,7 @@ if defined RAWDATA_ROOT (
   if not exist "!SOURCE_BROWSE_ROOT!\" set "SOURCE_BROWSE_ROOT="
 )
 if defined SOURCE_BROWSE_ROOT set "QFC_BROWSE_HINT=!SOURCE_BROWSE_ROOT!"
-if defined SOURCE_BROWSE_ROOT (
+if not defined SOURCE if defined SOURCE_BROWSE_ROOT (
   echo Source root: !SOURCE_BROWSE_ROOT!
   echo.
   echo already extracted KG's:
@@ -190,34 +198,46 @@ if "!SOURCE!"=="" if "!USE_DIALOG!"=="1" if exist "%POWERSHELL_EXE%" (
 )
 
 if "!SOURCE!"=="" (
-  if "!USE_DIALOG!"=="1" echo No folder selected in dialog.
-  set /p SOURCE=Source folder path ^(e.g. C:\...\01_BEV_Rawdata\51235 where 51235 = KG-Nr.^): 
+  if /I "!QFC_NON_INTERACTIVE!"=="1" (
+    echo ERROR: Source is required in non-interactive mode. Set QFC_SOURCE.
+  ) else (
+    if "!USE_DIALOG!"=="1" echo No folder selected in dialog.
+    set /p SOURCE=Source folder path ^(e.g. C:\...\01_BEV_Rawdata\51235 where 51235 = KG-Nr.^): 
+  )
 )
 
 if "!SOURCE!"=="" (
   echo ERROR: Source is required.
-  pause
+  call :pause_if_interactive
+  exit /b 2
+)
+if not exist "!SOURCE!\" (
+  echo ERROR: Source path does not exist: !SOURCE!
+  call :pause_if_interactive
   exit /b 2
 )
 for %%I in ("!SOURCE!") do set "SOURCE_FOLDER=%%~nxI"
 call :lookup_kg_name "!SOURCE_FOLDER!" SOURCE_KG_NAME
+set "SOURCE_KG_SLUG="
 if defined SOURCE_KG_NAME (
+  call :slugify_kg_name "!SOURCE_KG_NAME!" SOURCE_KG_SLUG
   echo Selected KatastralGemeinde: !SOURCE_FOLDER! ^(!SOURCE_KG_NAME!^)
 )
 echo.
 set "TARGET="
 if not defined QFC_OUTPUT_ROOT (
   echo ERROR: QFC_OUTPUT_ROOT is not set in qfieldcloud.env
-  pause
+  call :pause_if_interactive
   exit /b 2
 )
 if not exist "!QFC_OUTPUT_ROOT!\" (
   echo ERROR: QFC_OUTPUT_ROOT path does not exist: !QFC_OUTPUT_ROOT!
-  pause
+  call :pause_if_interactive
   exit /b 2
 )
 for %%I in ("!SOURCE!") do set "SRC_FOLDER=%%~nxI"
 set "TARGET_PROJECT=kataster_!SRC_FOLDER!_qfield"
+if defined SOURCE_KG_SLUG set "TARGET_PROJECT=kataster_!SRC_FOLDER!_!SOURCE_KG_SLUG!_qfield"
 set "TARGET=!QFC_OUTPUT_ROOT!\!TARGET_PROJECT!\!TARGET_PROJECT!.gpkg"
 echo Using output root from env: !TARGET!
 
@@ -272,7 +292,6 @@ if defined SYNC_ROOT if defined PROJECT_STEM (
     > "!QFC_CONFIG_FILE!" echo # Local QFieldCloud credentials ^(not part of git repo^)
     >> "!QFC_CONFIG_FILE!" echo QFIELDCLOUD_URL=https://app.qfield.cloud/api/v1/
     if defined QFIELDCLOUD_USERNAME >> "!QFC_CONFIG_FILE!" echo QFIELDCLOUD_USERNAME=!QFIELDCLOUD_USERNAME!
-    if defined QFIELDCLOUD_TOKEN >> "!QFC_CONFIG_FILE!" echo QFIELDCLOUD_TOKEN=!QFIELDCLOUD_TOKEN!
     if defined QFC_RAWDATA_ROOT >> "!QFC_CONFIG_FILE!" echo QFC_RAWDATA_ROOT=!QFC_RAWDATA_ROOT!
     if defined QFC_ROHDATEN_ROOT >> "!QFC_CONFIG_FILE!" echo QFC_ROHDATEN_ROOT=!QFC_ROHDATEN_ROOT!
     if defined QFC_PROCESSING_ROOT >> "!QFC_CONFIG_FILE!" echo QFC_PROCESSING_ROOT=!QFC_PROCESSING_ROOT!
@@ -341,15 +360,22 @@ if defined QFC_CONFIG_FILE if exist "!QFC_CONFIG_FILE!" (
   echo Loaded QFieldCloud config: !QFC_CONFIG_FILE!
 )
 
-set "PROJECT_ID="
+if not defined PROJECT_ID set "PROJECT_ID="
 if defined PROJECT_STEM (
-  if defined QFIELDCLOUD_USERNAME (
-    set "PROJECT_ID=a/!QFIELDCLOUD_USERNAME!/!PROJECT_STEM!"
-  ) else (
-    set "PROJECT_ID=!PROJECT_STEM!"
+  if "!PROJECT_ID!"=="" (
+    if defined QFIELDCLOUD_USERNAME (
+      set "PROJECT_ID=a/!QFIELDCLOUD_USERNAME!/!PROJECT_STEM!"
+    ) else (
+      set "PROJECT_ID=!PROJECT_STEM!"
+    )
   )
 )
 if "!PROJECT_ID!"=="" (
+  if /I "!QFC_NON_INTERACTIVE!"=="1" (
+    echo ERROR: QFieldCloud project identifier is required in non-interactive mode.
+    set "EXITCODE=1"
+    goto :final
+  )
   set /p PROJECT_ID=QFieldCloud project identifier ^(e.g. a/christianahammer/kataster_44106_qfield^): 
 )
 if "!PROJECT_ID!"=="" (
@@ -366,9 +392,13 @@ echo Using QFieldCloud project identifier: !PROJECT_ID!
 call "%QGIS_PY%" -m qfieldcloud_sdk.cli --help >nul 2>nul
 if errorlevel 1 (
   echo qfieldcloud-sdk is not installed in QGIS Python.
-  set /p INSTALL_QFC=Install now via pip? ^(y/N^): 
-  if /I "!INSTALL_QFC!"=="y" (
-    call "%QGIS_PY%" -m pip install --upgrade qfieldcloud-sdk
+  if /I "!QFC_NON_INTERACTIVE!"=="1" (
+    echo Non-interactive mode: skipping pip install prompt.
+  ) else (
+    set /p INSTALL_QFC=Install now via pip? ^(y/N^): 
+    if /I "!INSTALL_QFC!"=="y" (
+      call "%QGIS_PY%" -m pip install --upgrade qfieldcloud-sdk
+    )
   )
 )
 
@@ -380,6 +410,14 @@ if errorlevel 1 (
 )
 
 if "!QFIELDCLOUD_TOKEN!"=="" (
+  if /I "!QFC_NON_INTERACTIVE!"=="1" (
+    if "!QFIELDCLOUD_USERNAME!"=="" (
+      echo ERROR: Set QFIELDCLOUD_TOKEN or QFIELDCLOUD_USERNAME in non-interactive mode.
+      set "EXITCODE=1"
+      goto :final
+    )
+    set "USE_TOKEN=0"
+  ) else (
   echo.
   set /p LOGIN_MODE=No token set. Login with username/email instead? ^(Y/n^): 
   if /I not "!LOGIN_MODE!"=="n" if /I not "!LOGIN_MODE!"=="no" (
@@ -391,15 +429,14 @@ if "!QFIELDCLOUD_TOKEN!"=="" (
     )
     set "USE_TOKEN=0"
   )
+  )
 )
 
 if "!QFIELDCLOUD_TOKEN!"=="" if "!USE_TOKEN!"=="1" (
-  set /p QFIELDCLOUD_TOKEN=QFieldCloud token ^(input hidden not supported in .bat^): 
-  if "!QFIELDCLOUD_TOKEN!"=="" (
-    echo ERROR: token is required for cloud sync.
-    set "EXITCODE=1"
-    goto :final
-  )
+  echo ERROR: Interactive token entry is disabled for security.
+  echo Set QFIELDCLOUD_TOKEN in qfieldcloud.env or the environment, or use username login.
+  set "EXITCODE=1"
+  goto :final
 )
 
 set "CLOUD_SUMMARY=%TEMP%\qfieldcloud_sync_%RANDOM%_%RANDOM%.json"
@@ -410,14 +447,13 @@ echo Project identifier: !PROJECT_ID!
 echo Upload source folder: !UPLOAD_DIR!
 
 if "!USE_TOKEN!"=="1" (
-  call "%QGIS_PY%" "%QFC_SYNC_SCRIPT%" --url "%QFIELDCLOUD_URL%" --project-id "!PROJECT_ID!" --project-path "!UPLOAD_DIR!" --token "!QFIELDCLOUD_TOKEN!" --auto-create --wait-timeout 600 --summary-json "%CLOUD_SUMMARY%"
+  call "%QGIS_PY%" "%QFC_SYNC_SCRIPT%" --url "%QFIELDCLOUD_URL%" --project-id "!PROJECT_ID!" --project-path "!UPLOAD_DIR!" --auto-create --wait-timeout 600 --summary-json "%CLOUD_SUMMARY%"
 ) else (
   call "%QGIS_PY%" "%QFC_SYNC_SCRIPT%" --url "%QFIELDCLOUD_URL%" --project-id "!PROJECT_ID!" --project-path "!UPLOAD_DIR!" --username "!QFIELDCLOUD_USERNAME!" --auto-create --wait-timeout 600 --summary-json "%CLOUD_SUMMARY%"
 )
 if errorlevel 1 (
   echo ERROR: cloud sync failed. See summary file:
   echo %CLOUD_SUMMARY%
-  if exist "%CLOUD_SUMMARY%" type "%CLOUD_SUMMARY%"
   set "EXITCODE=1"
   goto :final
 )
@@ -427,8 +463,33 @@ echo %CLOUD_SUMMARY%
 
 :final
 echo.
-pause
+call :pause_if_interactive
 exit /b %EXITCODE%
+
+:pause_if_interactive
+if /I "%QFC_NO_PAUSE%"=="1" goto :eof
+pause
+goto :eof
+
+:slugify_kg_name
+set "KG_SLUG_INPUT=%~1"
+set "KG_SLUG_VALUE="
+if not defined KG_SLUG_INPUT goto slugify_done
+if not exist "%POWERSHELL_EXE%" (
+  set "KG_SLUG_VALUE=!KG_SLUG_INPUT: =-!"
+  goto slugify_done
+)
+set "KG_SLUG_TMP=%TEMP%\kg_slug_%RANDOM%_%RANDOM%.txt"
+set "QFC_KG_SLUG_INPUT=!KG_SLUG_INPUT!"
+"%POWERSHELL_EXE%" -NoProfile -Command "$v=$env:QFC_KG_SLUG_INPUT; if([string]::IsNullOrWhiteSpace($v)){ exit 0 }; $n=$v.Normalize([Text.NormalizationForm]::FormD); $sb=New-Object Text.StringBuilder; foreach($ch in $n.ToCharArray()){ if([Globalization.CharUnicodeInfo]::GetUnicodeCategory($ch) -ne [Globalization.UnicodeCategory]::NonSpacingMark){ [void]$sb.Append($ch) } }; $ascii=$sb.ToString().ToLowerInvariant(); $slug=[regex]::Replace($ascii,'[^a-z0-9]+','-').Trim('-'); if($slug){ Set-Content -LiteralPath $env:KG_SLUG_TMP -Value $slug -Encoding Ascii }"
+if exist "!KG_SLUG_TMP!" (
+  set /p KG_SLUG_VALUE=<"!KG_SLUG_TMP!"
+  del /q "!KG_SLUG_TMP!" >nul 2>nul
+)
+if not defined KG_SLUG_VALUE set "KG_SLUG_VALUE=!KG_SLUG_INPUT: =-!"
+:slugify_done
+if not "%~2"=="" set "%~2=!KG_SLUG_VALUE!"
+goto :eof
 
 :prepare_kg_lookup
 set "KG_LOOKUP_ROOT=%~1"
@@ -525,16 +586,13 @@ if !ZIP_COUNT! LEQ 0 (
   goto :eof
 )
 
-if not exist "%POWERSHELL_EXE%" (
-  echo WARNING: PowerShell is unavailable; cannot extract "!UNZIP_FOLDER!" from ZIP.
+if not exist "%KG_UNZIP_SCRIPT%" (
+  echo WARNING: ZIP extraction helper is unavailable; cannot extract "!UNZIP_FOLDER!" from ZIP.
   goto :eof
 )
 
 echo Folder "!UNZIP_FOLDER!" not yet extracted. Searching ZIP archive^(s^)...
-set "QFC_UNZIP_SRC=!UNZIP_RAWDATA!"
-set "QFC_UNZIP_DST=!UNZIP_TARGET_ROOT!"
-set "QFC_UNZIP_FOLDER=!UNZIP_FOLDER!"
-"%POWERSHELL_EXE%" -NoProfile -Command "Add-Type -AssemblyName System.IO.Compression.FileSystem; $src=$env:QFC_UNZIP_SRC; $dst=$env:QFC_UNZIP_DST; $wanted=$env:QFC_UNZIP_FOLDER; $found=$false; $zips=Get-ChildItem -LiteralPath $src -Filter *.zip -File -ErrorAction SilentlyContinue; foreach($zipFile in $zips){ $zip=[System.IO.Compression.ZipFile]::OpenRead($zipFile.FullName); try { foreach($entry in $zip.Entries){ $entryName=$entry.FullName.Replace('\','/'); if([string]::IsNullOrWhiteSpace($entryName)){ continue }; $parts=$entryName.Split('/', [System.StringSplitOptions]::RemoveEmptyEntries); $idx=-1; for($i=0; $i -lt $parts.Length; $i++){ if($parts[$i] -ieq $wanted){ $idx=$i; break } }; if($idx -lt 0){ continue }; $found=$true; $relParts=$parts[$idx..($parts.Length-1)]; $target=Join-Path $dst ($relParts -join '\'); if($entry.Name -eq ''){ [System.IO.Directory]::CreateDirectory($target) | Out-Null; continue }; $targetDir=Split-Path -Parent $target; if($targetDir){ [System.IO.Directory]::CreateDirectory($targetDir) | Out-Null }; [System.IO.Compression.ZipFileExtensions]::ExtractToFile($entry, $target, $true) } } finally { $zip.Dispose() } }; if(-not $found){ exit 3 }"
+call "%QGIS_PY%" "%KG_UNZIP_SCRIPT%" --zip-root "!UNZIP_RAWDATA!" --output-root "!UNZIP_TARGET_ROOT!" --folder "!UNZIP_FOLDER!"
 if errorlevel 3 (
   echo Folder "!UNZIP_FOLDER!" was not found in available ZIP archive^(s^).
   goto :eof

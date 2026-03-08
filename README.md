@@ -46,7 +46,7 @@ Workflow details:
 
 - Prompts for a 5-digit KatastralGemeinde number (KG-Nr.).
 - Shows detected KG names if a mapping file is available.
-- Converts to `03_QField_Output/kataster_<KG-Nr>_qfield/`.
+- Converts to `03_QField_Output/kataster_<KG-Nr>[_<kg-name>]_qfield/`.
 - Updates local sync folder in `04_QField_Sync/`.
 - Uploads/syncs with QFieldCloud via `scripts/qfieldcloud_sync.py`.
 
@@ -135,6 +135,8 @@ python3 -m unittest -v \
   test_kataster_common.py \
   test_bump_plugin_version.py \
   test_kg_mapping_lookup.py \
+  test_extract_kg_from_zip.py \
+  test_qfieldcloud_sync.py \
   test_qgis_mcp_blackbox_check.py
 ```
 

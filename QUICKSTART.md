@@ -71,8 +71,8 @@ run_kataster_converter.bat
 ```
 
 3. Enter a 5-digit KatastralGemeinde number (KG-Nr.), for example `51235`
-4. Verify output in `03_QField_Output/kataster_<KG-Nr>_qfield/`
-5. Verify sync copy in `04_QField_Sync/kataster_<KG-Nr>_qfield/`
+4. Verify output in `03_QField_Output/kataster_<KG-Nr>[_<kg-name>]_qfield/`
+5. Verify sync copy in `04_QField_Sync/kataster_<KG-Nr>[_<kg-name>]_qfield/`
 
 ## What You Get
 

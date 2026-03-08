@@ -13,7 +13,18 @@ import sys
 import time
 from typing import Any, Dict, Optional, Tuple
 
-from qfieldcloud_sdk.sdk import Client, FileTransferType, JobTypes
+try:
+    from qfieldcloud_sdk.sdk import Client, FileTransferType, JobTypes
+    QFIELDCLOUD_SDK_IMPORT_ERROR = None
+except ModuleNotFoundError as err:
+    Client = None
+    FileTransferType = None
+    JobTypes = None
+    QFIELDCLOUD_SDK_IMPORT_ERROR = err
+
+
+REDACTED = "***REDACTED***"
+SENSITIVE_NAME_TOKENS = ("token", "password", "secret", "authorization")
 
 
 def normalize_project_id(value: str) -> str:
@@ -83,32 +94,74 @@ def wait_for_job(client: Client, job_id: str, timeout: int, poll_seconds: int) -
     return False, last
 
 
+def is_sensitive_name(name: str) -> bool:
+    lowered = "".join(ch.lower() for ch in name if ch.isalnum() or ch == "_")
+    return any(token in lowered for token in SENSITIVE_NAME_TOKENS)
+
+
+def redact_sensitive_data(value: Any) -> Any:
+    if isinstance(value, dict):
+        redacted = {}
+        for key, item in value.items():
+            if is_sensitive_name(str(key)):
+                redacted[key] = REDACTED if item not in (None, "", [], {}) else item
+            else:
+                redacted[key] = redact_sensitive_data(item)
+        return redacted
+    if isinstance(value, list):
+        return [redact_sensitive_data(item) for item in value]
+    if isinstance(value, tuple):
+        return tuple(redact_sensitive_data(item) for item in value)
+    return value
+
+
+def write_summary(path: str, summary: Dict[str, Any]) -> None:
+    with open(path, "w", encoding="utf-8") as handle:
+        json.dump(redact_sensitive_data(summary), handle, ensure_ascii=False, indent=2)
+
+
+def prompt_for_password(login_user: str) -> str:
+    if not sys.stdin or not sys.stdin.isatty():
+        raise RuntimeError(
+            "No token provided and secure password prompt is unavailable. "
+            "Set QFIELDCLOUD_PASSWORD or use QFIELDCLOUD_TOKEN."
+        )
+    try:
+        return getpass.getpass(f"QFieldCloud password for {login_user}: ")
+    except (EOFError, KeyboardInterrupt) as exc:
+        raise RuntimeError("Password entry aborted.") from exc
+    except Exception as exc:
+        raise RuntimeError(
+            "Secure password prompt is unavailable. "
+            "Set QFIELDCLOUD_PASSWORD or use QFIELDCLOUD_TOKEN."
+        ) from exc
+
+
 def main(argv: list[str]) -> int:
     parser = argparse.ArgumentParser(description="Sync local project folder to QFieldCloud.")
     parser.add_argument("--url", default="https://app.qfield.cloud/api/v1/")
     parser.add_argument("--project-id", required=True)
     parser.add_argument("--project-path", required=True)
-    parser.add_argument("--token")
     parser.add_argument("--username")
     parser.add_argument("--email")
-    parser.add_argument("--password")
     parser.add_argument("--auto-create", action="store_true")
     parser.add_argument("--wait-timeout", type=int, default=600)
     parser.add_argument("--poll-seconds", type=int, default=5)
     parser.add_argument("--summary-json")
     args = parser.parse_args(argv)
 
-    token = args.token or os.environ.get("QFIELDCLOUD_TOKEN", "")
+    token = os.environ.get("QFIELDCLOUD_TOKEN", "")
     username = args.username or os.environ.get("QFIELDCLOUD_USERNAME", "")
     email = args.email or os.environ.get("QFIELDCLOUD_EMAIL", "")
     login_user = username or email
-    password = args.password or os.environ.get("QFIELDCLOUD_PASSWORD", "")
+    password = os.environ.get("QFIELDCLOUD_PASSWORD", "")
 
     summary: Dict[str, Any] = {
         "ok": False,
         "project_id_input": args.project_id,
         "project_id": normalize_project_id(args.project_id),
         "project_path": args.project_path,
+        "auth_mode": "token" if token else ("password" if login_user else "none"),
         "created_project": False,
         "upload_result": None,
         "process_job": None,
@@ -118,6 +171,11 @@ def main(argv: list[str]) -> int:
     }
 
     try:
+        if Client is None or FileTransferType is None or JobTypes is None:
+            raise RuntimeError(
+                f"qfieldcloud-sdk is not installed in this environment: {QFIELDCLOUD_SDK_IMPORT_ERROR}"
+            )
+
         project_id = summary["project_id"]
         if not os.path.isdir(args.project_path):
             raise RuntimeError(f"Project path not found: {args.project_path}")
@@ -135,19 +193,17 @@ def main(argv: list[str]) -> int:
         client = Client(url=args.url, verify_ssl=True, token=token)
         if not token:
             if login_user and not password:
-                try:
-                    password = getpass.getpass("QFieldCloud password: ")
-                except Exception:
-                    password = input("QFieldCloud password: ")
+                password = prompt_for_password(login_user)
 
             if login_user and password:
+                summary["auth_mode"] = "password"
                 login_result = client.login(login_user, password)
-                summary["login_result"] = login_result
                 token = None
                 if isinstance(login_result, dict):
                     token = login_result.get("token")
-                if token:
-                    client = Client(url=args.url, verify_ssl=True, token=str(token))
+                if not token:
+                    raise RuntimeError("QFieldCloud login did not return a token.")
+                client = Client(url=args.url, verify_ssl=True, token=str(token))
             else:
                 raise RuntimeError("No token provided. Use token or username/email login.")
 
@@ -247,16 +303,14 @@ def main(argv: list[str]) -> int:
 
         summary["ok"] = True
         if args.summary_json:
-            with open(args.summary_json, "w", encoding="utf-8") as handle:
-                json.dump(summary, handle, ensure_ascii=False, indent=2)
+            write_summary(args.summary_json, summary)
         return 0
 
     except Exception as err:
         summary["errors"].append(str(err))
         print(f"Cloud sync error: {err}", file=sys.stderr)
         if args.summary_json:
-            with open(args.summary_json, "w", encoding="utf-8") as handle:
-                json.dump(summary, handle, ensure_ascii=False, indent=2)
+            write_summary(args.summary_json, summary)
         return 1
 
 
