@@ -80,6 +80,7 @@ from qgis.core import (
 )
 
 ORTHOFOTO_LAYER_NAME = 'BEV Orthofoto (basemap.at)'
+GEOID_PATTERN_NAME = 'GV_Hoehengrid*.tif'
 COLOR_GREEN = '\033[32m'
 COLOR_YELLOW = '\033[33m'
 COLOR_RED = '\033[31m'
@@ -157,6 +158,39 @@ def find_ntv2_grid(source_folder, target_gpkg, explicit_grid=None):
 
     return None, searched
 
+
+def find_geoid_grid(source_folder, target_gpkg):
+    direct_candidates = []
+    for env_key in ('QGIS_GEOID_TIF', 'GEOID_TIF', 'HOEHENGRID_TIF', 'QFC_GEOID_FILE'):
+        direct_candidates.append(os.environ.get(env_key))
+
+    for candidate in dedupe_paths(direct_candidates):
+        if os.path.isfile(candidate) and candidate.lower().endswith(('.tif', '.tiff')):
+            return candidate, [candidate]
+
+    search_dirs = []
+    processing_root = os.environ.get('QFC_PROCESSING_ROOT')
+    if processing_root:
+        search_dirs.append(os.path.join(processing_root, 'grids'))
+
+    source_base = qgis_base_from_source(source_folder)
+    if source_base:
+        search_dirs.append(os.path.join(source_base, '02_QGIS_Processing', 'grids'))
+
+    target_base = qgis_base_from_target(target_gpkg)
+    if target_base:
+        search_dirs.append(os.path.join(target_base, '02_QGIS_Processing', 'grids'))
+
+    searched = dedupe_paths(search_dirs)
+    for search_dir in searched:
+        if not os.path.isdir(search_dir):
+            continue
+        matches = sorted(glob.glob(os.path.join(search_dir, '**', GEOID_PATTERN_NAME), recursive=True))
+        if matches:
+            return os.path.normpath(matches[0]), searched
+
+    return None, searched
+
 def memory_geometry_for(layer):
     geometry_type = QgsWkbTypes.geometryType(layer.wkbType())
     if geometry_type == QgsWkbTypes.PolygonGeometry:
@@ -184,6 +218,43 @@ def list_gpkg_layers(gpkg_path):
         return [row[0] for row in rows], None
     except sqlite3.Error as err:
         return [], f'GPKG-Layerliste konnte nicht gelesen werden: {err}'
+
+
+def geoid_band_field_name(layer, prefix='N_'):
+    for field in layer.fields():
+        name = field.name()
+        if name.startswith(prefix):
+            return name
+    return None
+
+
+def apply_geoid_heights(layer, geoid_tif):
+    sampled = processing.run(
+        'qgis:rastersampling',
+        {
+            'INPUT': layer,
+            'RASTERCOPY': geoid_tif,
+            'COLUMN_PREFIX': 'N_',
+            'OUTPUT': 'TEMPORARY_OUTPUT',
+        },
+    )['OUTPUT']
+
+    sampled_field = geoid_band_field_name(sampled)
+    if not sampled_field:
+        raise RuntimeError('Geoid-Rastersampling lieferte kein Hoehenfeld mit Prefix N_.')
+
+    return processing.run(
+        'native:fieldcalculator',
+        {
+            'INPUT': sampled,
+            'FIELD_NAME': 'H_orth',
+            'FIELD_TYPE': 0,
+            'FIELD_LENGTH': 20,
+            'FIELD_PRECISION': 3,
+            'FORMULA': f'z($geometry) - "{sampled_field}"',
+            'OUTPUT': 'TEMPORARY_OUTPUT',
+        },
+    )['OUTPUT']
 
 
 def build_orthofoto_layer():
@@ -259,7 +330,18 @@ def write_output_project(gpkg_path, layer_names, target_crs):
     return output_qgz, None
 
 
-def write_report(report_path, source_folder, target_gpkg, output_qgz, ntv2_grid, imported_layers, skipped_layers, failed_layers):
+def write_report(
+    report_path,
+    source_folder,
+    target_gpkg,
+    output_qgz,
+    ntv2_grid,
+    geoid_grid,
+    geoid_applied_layers,
+    imported_layers,
+    skipped_layers,
+    failed_layers,
+):
     timestamp = datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
     lines = [
         f'Kataster-Konverter Report: {timestamp}',
@@ -267,10 +349,16 @@ def write_report(report_path, source_folder, target_gpkg, output_qgz, ntv2_grid,
         f'Ziel-GPKG: {target_gpkg}',
         f'Ziel-QGZ: {output_qgz or "nicht erstellt"}',
         f'GIS-Grid: {ntv2_grid or "nicht gefunden"}',
+        f'Hoehengrid: {geoid_grid or "nicht gefunden"}',
+        f'Orthometrische Hoehen: {len(geoid_applied_layers)} Layer',
         '',
         f'Importiert ({len(imported_layers)}):',
     ]
     lines.extend([f'- {name}' for name in imported_layers] or ['- keine'])
+
+    lines.append('')
+    lines.append(f'Orthometrische Hoehen ({len(geoid_applied_layers)}):')
+    lines.extend([f'- {name}' for name in geoid_applied_layers] or ['- keine'])
 
     lines.append('')
     lines.append(f'Uebersprungen ({len(skipped_layers)}):')
@@ -317,10 +405,12 @@ def convert(source_folder, target_gpkg, ntv2_grid_path=None):
             f'{operation_error} Ausgewaehlte lokale GIS-Grid Datei: {ntv2_grid}'
         )
     transform_context = QgsCoordinateTransformContext()
+    geoid_grid, _searched_geoid_dirs = find_geoid_grid(source_folder, target_gpkg)
 
     imported_layers = []
     skipped_layers = []
     failed_layers = []
+    geoid_applied_layers = []
     path_actions = []
 
     gpkg_exists = os.path.exists(target_gpkg)
@@ -363,6 +453,17 @@ def convert(source_folder, target_gpkg, ntv2_grid_path=None):
         except Exception as err:
             failed_layers.append(f'{filename}: Reprojektion fehlgeschlagen ({err})')
             continue
+
+        if geoid_grid and QgsWkbTypes.geometryType(reprojected.wkbType()) == QgsWkbTypes.PointGeometry:
+            if QgsWkbTypes.hasZ(reprojected.wkbType()):
+                try:
+                    reprojected = apply_geoid_heights(reprojected, geoid_grid)
+                    geoid_applied_layers.append(layer_name)
+                except Exception as err:
+                    failed_layers.append(f'{filename}: Hoehengrid-Korrektur fehlgeschlagen ({err})')
+                    continue
+            else:
+                skipped_layers.append(f'{filename}: Hoehengrid verfuegbar, aber Geometrie hat keine Z-Werte')
 
         extent = reprojected.extent()
         extent_values = [extent.xMinimum(), extent.yMinimum(), extent.xMaximum(), extent.yMaximum()]
@@ -429,6 +530,8 @@ def convert(source_folder, target_gpkg, ntv2_grid_path=None):
             target_gpkg,
             output_qgz,
             ntv2_grid,
+            geoid_grid,
+            geoid_applied_layers,
             imported_layers,
             skipped_layers,
             failed_layers,
@@ -459,6 +562,8 @@ def convert(source_folder, target_gpkg, ntv2_grid_path=None):
         'output_qgz': output_qgz,
         'report_path': report_path,
         'ntv2_grid': ntv2_grid,
+        'geoid_grid': geoid_grid,
+        'geoid_applied_layers': geoid_applied_layers,
         'operation_name': operation_name,
         'operation_accuracy': operation_accuracy,
         'operation_grid': operation_grids[0] if operation_grids else None,
@@ -490,6 +595,9 @@ def print_summary(result):
     print(f"Ziel-GPKG: {result['target_gpkg']}")
     if result.get('ntv2_grid'):
         print(f"GIS-Grid: {result['ntv2_grid']}")
+    if result.get('geoid_grid'):
+        print(f"Hoehengrid: {result['geoid_grid']}")
+        print(f"Orthometrische Hoehen: {len(result.get('geoid_applied_layers') or [])} Layer")
     if result.get('operation_name'):
         print(f"Transform: {result['operation_name']}")
     if result.get('operation_grid'):

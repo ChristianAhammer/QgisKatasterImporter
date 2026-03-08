@@ -39,6 +39,7 @@ from qgis.core import (
 
 class KatasterConverterPlugin:
     ORTHOFOTO_LAYER_NAME = "BEV Orthofoto (basemap.at)"
+    GEOID_PATTERN_NAME = "GV_Hoehengrid*.tif"
 
     def __init__(self, iface):
         self.iface = iface
@@ -185,6 +186,81 @@ class KatasterConverterPlugin:
         return None, searched
 
     @staticmethod
+    def _find_geoid_grid(source_folder, target_gpkg, project_path):
+        direct_candidates = []
+        for env_key in ("QGIS_GEOID_TIF", "GEOID_TIF", "HOEHENGRID_TIF", "QFC_GEOID_FILE"):
+            direct_candidates.append(os.environ.get(env_key))
+
+        for candidate in KatasterConverterPlugin._dedupe_paths(direct_candidates):
+            if os.path.isfile(candidate) and candidate.lower().endswith((".tif", ".tiff")):
+                return candidate, [candidate]
+
+        search_dirs = []
+        processing_root = os.environ.get("QFC_PROCESSING_ROOT")
+        if processing_root:
+            search_dirs.append(os.path.join(processing_root, "grids"))
+
+        qgis_base_from_source = KatasterConverterPlugin._qgis_base_from_source(source_folder)
+        if qgis_base_from_source:
+            search_dirs.append(os.path.join(qgis_base_from_source, "02_QGIS_Processing", "grids"))
+
+        qgis_base_from_target = KatasterConverterPlugin._qgis_base_from_target(target_gpkg)
+        if qgis_base_from_target:
+            search_dirs.append(os.path.join(qgis_base_from_target, "02_QGIS_Processing", "grids"))
+
+        if project_path:
+            project_dir = os.path.dirname(project_path)
+            project_base = os.path.normpath(os.path.join(project_dir, ".."))
+            search_dirs.append(os.path.join(project_base, "02_QGIS_Processing", "grids"))
+
+        searched = KatasterConverterPlugin._dedupe_paths(search_dirs)
+        for search_dir in searched:
+            if not os.path.isdir(search_dir):
+                continue
+            matches = sorted(glob.glob(os.path.join(search_dir, "**", KatasterConverterPlugin.GEOID_PATTERN_NAME), recursive=True))
+            if matches:
+                return os.path.normpath(matches[0]), searched
+
+        return None, searched
+
+    @staticmethod
+    def _geoid_band_field_name(layer, prefix="N_"):
+        for field in layer.fields():
+            name = field.name()
+            if name.startswith(prefix):
+                return name
+        return None
+
+    @staticmethod
+    def _apply_geoid_heights(layer, geoid_tif):
+        sampled = processing.run(
+            "qgis:rastersampling",
+            {
+                "INPUT": layer,
+                "RASTERCOPY": geoid_tif,
+                "COLUMN_PREFIX": "N_",
+                "OUTPUT": "TEMPORARY_OUTPUT",
+            },
+        )["OUTPUT"]
+
+        sampled_field = KatasterConverterPlugin._geoid_band_field_name(sampled)
+        if not sampled_field:
+            raise RuntimeError("Geoid-Rastersampling lieferte kein Höhenfeld mit Prefix N_.")
+
+        return processing.run(
+            "native:fieldcalculator",
+            {
+                "INPUT": sampled,
+                "FIELD_NAME": "H_orth",
+                "FIELD_TYPE": 0,
+                "FIELD_LENGTH": 20,
+                "FIELD_PRECISION": 3,
+                "FORMULA": f'z($geometry) - "{sampled_field}"',
+                "OUTPUT": "TEMPORARY_OUTPUT",
+            },
+        )["OUTPUT"]
+
+    @staticmethod
     def _build_orthofoto_layer():
         wmts_params = {
             "contextualWMSLegend": "0",
@@ -279,7 +355,18 @@ class KatasterConverterPlugin:
             return [], f"GPKG-Layerliste konnte nicht gelesen werden: {err}"
 
     @staticmethod
-    def _write_report(report_path, source_folder, target_gpkg, output_qgz, ntv2_grid, imported_layers, skipped_layers, failed_layers):
+    def _write_report(
+        report_path,
+        source_folder,
+        target_gpkg,
+        output_qgz,
+        ntv2_grid,
+        geoid_grid,
+        geoid_applied_layers,
+        imported_layers,
+        skipped_layers,
+        failed_layers,
+    ):
         timestamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         lines = [
             f"Kataster-Konverter Report: {timestamp}",
@@ -287,10 +374,16 @@ class KatasterConverterPlugin:
             f"Ziel-GPKG: {target_gpkg}",
             f"Ziel-QGZ: {output_qgz or 'nicht erstellt'}",
             f"GIS-Grid: {ntv2_grid or 'nicht gefunden'}",
+            f"Höhengrid: {geoid_grid or 'nicht gefunden'}",
+            f"Orthometrische Höhen: {len(geoid_applied_layers)} Layer",
             "",
             f"Importiert ({len(imported_layers)}):",
         ]
         lines.extend([f"- {name}" for name in imported_layers] or ["- keine"])
+
+        lines.append("")
+        lines.append(f"Orthometrische Höhen ({len(geoid_applied_layers)}):")
+        lines.extend([f"- {name}" for name in geoid_applied_layers] or ["- keine"])
 
         lines.append("")
         lines.append(f"Übersprungen ({len(skipped_layers)}):")
@@ -379,10 +472,12 @@ class KatasterConverterPlugin:
             )
             return
         transform_context = QgsCoordinateTransformContext()
+        geoid_grid, _searched_geoid_dirs = self._find_geoid_grid(folder, target_gpkg, project_path)
 
         imported_layers = []
         skipped_layers = []
         failed_layers = []
+        geoid_applied_layers = []
 
         # Avoid old converted layers masking the current GST/SGG output.
         self._remove_existing_kataster_layers_from_project()
@@ -424,6 +519,17 @@ class KatasterConverterPlugin:
             except Exception as err:
                 failed_layers.append(f"{filename}: Reprojektion fehlgeschlagen ({err})")
                 continue
+
+            if geoid_grid and QgsWkbTypes.geometryType(reprojected.wkbType()) == QgsWkbTypes.PointGeometry:
+                if QgsWkbTypes.hasZ(reprojected.wkbType()):
+                    try:
+                        reprojected = self._apply_geoid_heights(reprojected, geoid_grid)
+                        geoid_applied_layers.append(layer_name)
+                    except Exception as err:
+                        failed_layers.append(f"{filename}: Höhengrid-Korrektur fehlgeschlagen ({err})")
+                        continue
+                else:
+                    skipped_layers.append(f"{filename}: Höhengrid verfügbar, aber Geometrie hat keine Z-Werte")
 
             extent = reprojected.extent()
             extent_values = [extent.xMinimum(), extent.yMinimum(), extent.xMaximum(), extent.yMaximum()]
@@ -507,6 +613,8 @@ class KatasterConverterPlugin:
             target_gpkg,
             output_qgz,
             ntv2_grid,
+            geoid_grid,
+            geoid_applied_layers,
             imported_layers,
             skipped_layers,
             failed_layers,
@@ -523,6 +631,9 @@ class KatasterConverterPlugin:
             f"Ziel-GPKG: {target_gpkg}",
             f"GIS-Grid: {ntv2_grid}",
         ]
+        if geoid_grid:
+            summary_lines.append(f"Höhengrid: {geoid_grid}")
+            summary_lines.append(f"Orthometrische Höhen: {len(geoid_applied_layers)} Layer")
         if operation_name:
             summary_lines.append(f"Transform: {operation_name}")
         if operation_grids:
